@@ -330,9 +330,9 @@
   `feat/company-erasure-register` on 2026-11-21 and NOT pushed or deployed: the receiver now removes
   the receipts tables, rows, stored files and every row with the company stamp, records each run in
   a new ledger table (`erasure_events`, migration 0053), and answers 200 only after a recount, with
-  a list of what an erasure does not remove. Open before it ships: one independent review of the
-  branch, and the owner's answer to the one open question of the plan (whether a company erasure
-  still holds printed guest names for ten years).
+  a list of what an erasure does not remove. Reviewed independently on 2026-11-21 (14 findings,
+  all fixed on the branch). Open before it ships: the owner's answer to the one open question of
+  the plan (whether a company erasure still holds printed guest names for ten years).
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] DECISION FOR THE OWNER, nothing is deleted before a yes: erase by hand what Receipts still
   holds in production of the company with auth-brain company id
@@ -370,8 +370,11 @@
   and so belong to no company; and that Receipts does not receive a person's erasure
   (`user.erased`), so a person's own Google connection (`google_sheets_credentials`) is removed by
   nothing. Also missing in auth-brain, needed after a database recovery: its Erasures page cannot
-  send an acknowledged delivery again, and its note on what Receipts erases (`suite-apps.ts`)
-  still describes contact data only. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  send an acknowledged delivery again, its note on what Receipts erases (`suite-apps.ts`)
+  still describes contact data only, and its delivery names only the workspaces that still exist:
+  a company that deleted a workspace before it was erased still has that workspace's rows here,
+  the erasure stops on them (`rows_outside_named_workspaces`) and a person has to send the
+  delivery again with that workspace named. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
   row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,

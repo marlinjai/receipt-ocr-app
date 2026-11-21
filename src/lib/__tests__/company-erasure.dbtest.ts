@@ -7,7 +7,10 @@ import { ensureContactsLayout } from '../../../test/contacts-db';
 import { companyContacts, contactsDb } from '../contacts/db';
 import { SharedContactStore } from '../contacts/shared-store';
 import {
+  ErasureBusyError,
+  ErasureChangedError,
   ErasureConflictError,
+  ErasureIncompleteError,
   StoredFileEraseError,
   UNSTAMPED_MODELS,
   classifyModels,
@@ -15,7 +18,8 @@ import {
   eraseCompany,
   type CompanyErasureDeps,
 } from '../company-erasure';
-import { receiveErasureDelivery } from '../erasure';
+import { currentRegisterHash } from '../company-export';
+import { receiveErasureDelivery, settleGuestCopies } from '../erasure';
 import { erasureLedger } from '../erasure-ledger';
 import { stampedModels } from '../workspace-move';
 
@@ -126,7 +130,7 @@ function deps(over: Partial<CompanyErasureDeps> = {}) {
     deleteStoredFile: vi.fn(async (fileId: string) => {
       removed.push(fileId);
     }),
-    endBankConnections: vi.fn(async () => 0),
+    endBankConnections: vi.fn(async () => ({ connections: 0, sessionsLeftOpen: 0 })),
     endAccountShares: vi.fn(async () => ({ shares: 0, links: 0, records: 0 })),
     ...over,
   };
@@ -220,7 +224,7 @@ describe('eraseCompany against the real databases', () => {
     const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, { ...second.all, now: new Date('2027-01-01T10:00:00Z') });
 
     expect(second.removed).toEqual([]);
-    expect(counts.register).toEqual({ tables: 0, receipts: 0, storedFiles: 0, storedFilesKept: 0, records: {}, companyExports: 0 });
+    expect(counts.register).toEqual({ tables: 0, receipts: 0, storedFiles: 0, storedFilesAlreadyGone: 0, storedFilesKept: 0, records: {}, companyExports: 0 });
     expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, sharedContacts: 0 });
     expect(await db.mealGuest.findMany({ where: { authTenantId: c.tenantId }, select: { retainUntil: true } })).toEqual(heldBefore);
     expect(heldBefore[0].retainUntil?.toISOString()).toBe('2036-11-21T10:00:00.000Z');
@@ -249,7 +253,7 @@ describe('eraseCompany against the real databases', () => {
     expect(await leftOf(c)).toEqual(NOTHING);
   });
 
-  it('a stored file a receipt of another company still shows is kept, with that receipt\'s reference, and the answer counts it', async () => {
+  it('a stored file a living receipt of another company still shows is kept, with that receipt\'s reference, and the answer counts it', async () => {
     const c = await company();
     const other = await bystander();
     await attach(other.ws, other.receipt.rowId, c.files[0]);
@@ -259,7 +263,7 @@ describe('eraseCompany against the real databases', () => {
 
     expect([...d.removed].sort()).toEqual(c.files.slice(1));
     expect(counts.register).toMatchObject({ storedFiles: 2, storedFilesKept: 1 });
-    expect(counts.notErased).toContainEqual({ what: 'stored_files_shown_by_another_company', count: 1 });
+    expect(counts.notErased).toContainEqual({ what: 'stored_files_shown_elsewhere', count: 1 });
     expect((await db.dtFile.findMany({ where: { fileId: c.files[0] }, select: { rowId: true } })).map((f) => f.rowId)).toEqual([other.receipt.rowId]);
     expect(await leftOf(c)).toEqual(NOTHING);
   });
@@ -273,7 +277,7 @@ describe('eraseCompany against the real databases', () => {
     const error = await eraseCompany(db, c.tenantId, c.workspaceIds, d.all).catch((e) => e);
 
     expect(error).toBeInstanceOf(ErasureConflictError);
-    expect((error as ErasureConflictError).tables).toEqual(['workspace_notes']);
+    expect(error).toMatchObject({ kind: 'rows_of_another_company', tables: ['workspace_notes'] });
     expect(d.removed).toEqual([]);
     expect(await leftOf(c)).toMatchObject({ physicalTables: 2, dtTables: 2, reviews: 3, payments: 1, notes: 1, exports: 1 });
     expect((await companyContacts(c.tenantId).list({ includeArchived: true })).length).toBe(1);
@@ -286,6 +290,258 @@ describe('eraseCompany against the real databases', () => {
     expect(counts.register).toMatchObject({ tables: 1, receipts: 2, storedFiles: 2 });
     expect(await db.dtTable.count({ where: { id: c.second.tableId } })).toBe(1);
     expect(await db.sheetImportConfig.count({ where: { authWorkspaceId: c.second.workspaceId } })).toBe(1);
+  });
+});
+
+/** Runs `work` with a trigger on one table, and removes the trigger and its function afterwards whatever happens. */
+async function withTrigger(table: string, timing: 'BEFORE' | 'AFTER', body: string, work: () => Promise<void>) {
+  const name = `test_trg_${randomUUID().replace(/-/g, '')}`;
+  await db.$executeRawUnsafe(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ${body} END $$`);
+  await db.$executeRawUnsafe(`CREATE TRIGGER ${name} ${timing} DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+  try {
+    await work();
+  } finally {
+    await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${name} ON ${table}`);
+    await db.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${name}()`);
+  }
+}
+
+describe('a name that was held stays held', () => {
+  it('the rule itself: "covered" removes only names without a date', async () => {
+    const ws = `test-ws-${randomUUID()}`;
+    const row = { authWorkspaceId: ws, authTenantId: null, rowId: `row-${randomUUID()}`, displayName: 'Printed Name' };
+    await db.mealGuest.create({ data: { ...row, position: 0, contactId: null, retainUntil: new Date('2036-01-01T00:00:00Z') } });
+    await db.mealGuest.create({ data: { ...row, position: 1, contactId: `c-${randomUUID()}` } });
+    expect(await settleGuestCopies(db, [{ authWorkspaceId: { in: [ws] } }], true)).toEqual({ removed: 1, held: 0 });
+    expect(await db.mealGuest.findMany({ where: { authWorkspaceId: ws }, select: { position: true } })).toEqual([{ position: 0 }]);
+  });
+
+  it('a company that exported an empty register, then recorded meals: the first run holds the names and stops after the tables are gone, the second reads "identical" and still removes none', async () => {
+    const ws = await createWorkspace();
+    // The export of a register without meals: its hash is the hash of no files at all.
+    await db.companyExport.create({
+      data: { authTenantId: ws.tenantId, fileCount: 1, sha256: 'c'.repeat(64), registerSha256: await currentRegisterHash(db, [ws.workspaceId]) },
+    });
+    const contact = await new SharedContactStore(companyContacts(ws.tenantId), db).create({ name: `Gast ${randomUUID().slice(0, 8)}` });
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    const guest = { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, rowId, displayCompany: '' };
+    await db.mealGuest.create({ data: { ...guest, position: 0, contactId: contact.id, displayName: contact.name } });
+    await db.mealGuest.create({ data: { ...guest, position: 1, contactId: null, displayName: 'Printed Name' } });
+    await db.workspaceNotes.create({ data: { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, body: 'x' } });
+
+    // Run 1: the register changed since the export, so the names are held. It then stops after the
+    // receipts table is dropped and before the export record goes (the database refuses one delete).
+    await withTrigger('workspace_notes', 'BEFORE', `IF OLD.auth_workspace_id = '${ws.workspaceId}' THEN RAISE EXCEPTION 'refused for the test'; END IF; RETURN OLD;`, async () => {
+      const error = await eraseCompany(db, ws.tenantId, [ws.workspaceId], { ...deps().all, now: new Date('2026-11-21T10:00:00Z') }).catch((e) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as { partial?: { exportCoverage?: string; guestCopiesHeld?: number; register?: { tables: number } } }).partial).toMatchObject({
+        exportCoverage: 'changed', guestCopiesHeld: 2, register: { tables: 1 },
+      });
+    });
+    expect(await db.dtTable.count({ where: { id: ws.tableId } })).toBe(0);
+    expect(await db.companyExport.count({ where: { authTenantId: ws.tenantId } })).toBe(1);
+    const held = await db.mealGuest.findMany({ where: { authWorkspaceId: ws.workspaceId }, select: { position: true, contactId: true, retainUntil: true }, orderBy: { position: 'asc' } });
+    expect(held.map((g) => [g.contactId, g.retainUntil?.toISOString()])).toEqual([[null, '2036-11-21T10:00:00.000Z'], [null, '2036-11-21T10:00:00.000Z']]);
+
+    // Run 2: the register is empty now and equals the export again. The held names stay, with their date.
+    const counts = await eraseCompany(db, ws.tenantId, [ws.workspaceId], { ...deps().all, now: new Date('2027-01-01T10:00:00Z') });
+    expect(counts).toMatchObject({ exportCoverage: 'identical', guestCopies: 0, guestCopiesHeld: 2 });
+    expect(await db.mealGuest.findMany({ where: { authWorkspaceId: ws.workspaceId }, select: { position: true, contactId: true, retainUntil: true }, orderBy: { position: 'asc' } })).toEqual(held);
+  });
+});
+
+describe('the stamps and the delivery must agree', () => {
+  it('rows with the company\'s stamp in a workspace the delivery does not name stop the run: nothing is deleted there or anywhere', async () => {
+    const c = await company();
+    const d = deps();
+    // The delivery names only the second workspace. The first, stamped with the company, is not named:
+    // auth-brain says it is not the company's (moved to another company, the restamp here never happened).
+    const error = await eraseCompany(db, c.tenantId, [c.second.workspaceId], d.all).catch((e) => e);
+
+    expect(error).toBeInstanceOf(ErasureConflictError);
+    expect(error).toMatchObject({ kind: 'rows_outside_named_workspaces' });
+    expect((error as ErasureConflictError).tables).toEqual(expect.arrayContaining(['dt_tables', 'receipt_reviews', 'tax_payments', 'workspace_notes']));
+    expect(d.removed).toEqual([]);
+    expect(await leftOf(c)).toMatchObject({ physicalTables: 2, dtTables: 2, fileRefs: 3, reviews: 3, payments: 1, notes: 1, importConfigs: 1, exports: 1 });
+    expect((await companyContacts(c.tenantId).list({ includeArchived: true })).length).toBe(1);
+  });
+
+  it('a delivery that names no workspace erases by stamp: there is nothing else to go by', async () => {
+    const c = await company();
+    const counts = await eraseCompany(db, c.tenantId, [], deps().all);
+    expect(counts.register).toMatchObject({ tables: 1, receipts: 2 });
+    expect(await db.dtTable.count({ where: { id: c.first.tableId } })).toBe(0);
+  });
+});
+
+describe('one run per company at a time', () => {
+  it('a second run while the first is at work is refused and touches nothing; the first finishes and counts every file once', async () => {
+    const c = await company();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const atWork = new Promise<void>((resolve) => (entered = resolve));
+    const first = deps({
+      deleteStoredFile: vi.fn(async () => {
+        entered();
+        await gate;
+      }),
+    });
+    const running = eraseCompany(db, c.tenantId, c.workspaceIds, first.all);
+    await atWork;
+
+    const second = deps();
+    await expect(eraseCompany(db, c.tenantId, c.workspaceIds, second.all)).rejects.toBeInstanceOf(ErasureBusyError);
+    expect(second.removed).toEqual([]);
+    expect(second.all.endBankConnections).not.toHaveBeenCalled();
+
+    // Another company is not held up by this company's lock.
+    const other = await company();
+    expect((await eraseCompany(db, other.tenantId, other.workspaceIds, deps().all)).register).toMatchObject({ receipts: 3 });
+
+    release();
+    const counts = await running;
+    expect(counts.register).toMatchObject({ tables: 2, receipts: 3, storedFiles: 3, storedFilesAlreadyGone: 0 });
+    expect(await leftOf(c)).toEqual(NOTHING);
+    // The lock is free again.
+    expect((await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all)).register).toMatchObject({ tables: 0, storedFiles: 0 });
+  });
+
+  it('a file the store no longer has is counted apart, not as removed again', async () => {
+    const c = await company();
+    const d = deps({ deleteStoredFile: vi.fn(async (fileId: string) => (fileId === c.files[0] ? ('already_gone' as const) : ('removed' as const))) });
+    expect((await eraseCompany(db, c.tenantId, c.workspaceIds, d.all)).register).toMatchObject({ storedFiles: 2, storedFilesAlreadyGone: 1 });
+  });
+});
+
+describe('what changes while a run goes on', () => {
+  it('a receipt written after the rows were listed is removed with the table', async () => {
+    const c = await company();
+    let added = false;
+    const d = deps({
+      deleteStoredFile: vi.fn(async () => {
+        if (added) return;
+        added = true;
+        await c.first.addReceipt(plainMealReceipt());
+      }),
+    });
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, d.all);
+    expect(counts.register).toMatchObject({ tables: 2, receipts: 4 });
+    expect(await leftOf(c)).toEqual(NOTHING);
+  });
+
+  it('a file attached after the files were removed stops the run before its table goes; the next run removes that file too', async () => {
+    const c = await company();
+    const late = `file-${randomUUID()}`;
+    let attached = false;
+    const d = deps({
+      deleteStoredFile: vi.fn(async () => {
+        if (attached) return;
+        attached = true;
+        await attach(c.first, c.receipts[0].rowId, late);
+      }),
+    });
+
+    await expect(eraseCompany(db, c.tenantId, c.workspaceIds, d.all)).rejects.toBeInstanceOf(ErasureChangedError);
+    // The table that holds the late file is still there, with the reference that names it.
+    expect(await db.dtTable.count({ where: { id: c.first.tableId } })).toBe(1);
+    expect(await db.dtFile.count({ where: { fileId: late } })).toBe(1);
+
+    const next = deps();
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, next.all);
+    expect(next.removed).toContain(late);
+    expect(counts.register?.storedFiles).toBeGreaterThanOrEqual(1);
+    expect(await leftOf(c)).toEqual(NOTHING);
+    expect(await db.dtFile.count({ where: { fileId: late } })).toBe(0);
+  });
+});
+
+describe('the older row layout and references without a row', () => {
+  it('a receipts table whose rows live in the shared dt_rows is erased with its rows and files', async () => {
+    const tenantId = `test-tenant-${randomUUID()}`;
+    const workspaceId = `test-ws-${randomUUID()}`;
+    const table = await db.dtTable.create({ data: { workspaceId, authTenantId: tenantId, name: 'Receipts', migrated: false } });
+    const column = await db.dtColumn.create({ data: { tableId: table.id, name: 'Name', type: 'text', position: 0 } });
+    await db.dtView.create({ data: { tableId: table.id, name: 'All' } });
+    const at = new Date().toISOString();
+    const row = await db.dtRow.create({ data: { tableId: table.id, cells: {}, createdAt: at, updatedAt: at } });
+    const fileId = `file-${randomUUID()}`;
+    await db.dtFile.create({ data: { rowId: row.id, columnId: column.id, fileId, fileUrl: `/api/files/${fileId}`, originalName: 'beleg.jpg', mimeType: 'image/jpeg' } });
+    const d = deps();
+
+    const counts = await eraseCompany(db, tenantId, [workspaceId], d.all);
+
+    expect(d.removed).toEqual([fileId]);
+    expect(counts.register).toMatchObject({ tables: 1, receipts: 1, storedFiles: 1 });
+    expect(await db.dtRow.count({ where: { tableId: table.id } })).toBe(0);
+    expect(await db.dtColumn.count({ where: { tableId: table.id } })).toBe(0);
+    expect(await db.dtView.count({ where: { tableId: table.id } })).toBe(0);
+    expect(await db.dtFile.count({ where: { fileId } })).toBe(0);
+    expect(await db.dtTable.count({ where: { id: table.id } })).toBe(0);
+  });
+
+  it('a reference whose row is in no table any more does not keep a file: the file goes and the stray reference with it', async () => {
+    const c = await company();
+    const image = (await c.first.adapter.getColumns(c.first.tableId)).find((col) => col.name === 'Receipt Image')!;
+    await db.dtFile.create({
+      data: { rowId: `gone-${randomUUID()}`, columnId: image.id, fileId: c.files[0], fileUrl: `/api/files/${c.files[0]}`, originalName: 'beleg.jpg', mimeType: 'image/jpeg' },
+    });
+    const d = deps();
+
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, d.all);
+
+    expect([...d.removed].sort()).toEqual(c.files);
+    expect(counts.register).toMatchObject({ storedFiles: 3, storedFilesKept: 0 });
+    expect(counts.notErased?.map((n) => n.what)).not.toContain('stored_files_shown_elsewhere');
+    expect(await db.dtFile.count({ where: { fileId: c.files[0] } })).toBe(0);
+  });
+});
+
+describe('the answer covers what it says', () => {
+  it('rows that are still there after the run fail it: the recount, not the deletes, decides', async () => {
+    const c = await company();
+    // The database quietly keeps one row (a trigger turns its delete into nothing): the delete reports no error.
+    await withTrigger('workspace_notes', 'BEFORE', `IF OLD.auth_workspace_id = '${c.first.workspaceId}' THEN RETURN NULL; END IF; RETURN OLD;`, async () => {
+      const error = await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all).catch((e) => e);
+      expect(error).toBeInstanceOf(ErasureIncompleteError);
+      expect((error as ErasureIncompleteError).remaining).toEqual({ workspace_notes: 1 });
+    });
+    // Without the obstacle the next run finishes.
+    await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all);
+    expect(await leftOf(c)).toEqual(NOTHING);
+  });
+
+  it('a row left in a table below an erased receipt fails the run, although that table carries no stamp', async () => {
+    const c = await company();
+    const rowId = c.receipts[0].rowId;
+    // The choices of a receipt (several options in one cell) hang below the row without a stamp and without a foreign key.
+    await db.dtRowSelectValue.create({ data: { rowId, columnId: `col-${randomUUID()}`, optionId: `opt-${randomUUID()}` } });
+    const choices = 1;
+    await withTrigger('dt_row_select_values', 'BEFORE', `IF OLD.row_id = '${rowId}' THEN RETURN NULL; END IF; RETURN OLD;`, async () => {
+      const error = await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all).catch((e) => e);
+      expect(error).toBeInstanceOf(ErasureIncompleteError);
+      expect((error as ErasureIncompleteError).remaining).toEqual({ dt_row_select_values: choices });
+    });
+  });
+
+  it('contacts still in the shared contacts database fail the run', async () => {
+    const c = await company();
+    const error = await eraseCompany(db, c.tenantId, c.workspaceIds, { ...deps().all, countContacts: async () => 2 }).catch((e) => e);
+    expect(error).toBeInstanceOf(ErasureIncompleteError);
+    expect((error as ErasureIncompleteError).remaining).toEqual({ shared_contacts: 2 });
+  });
+
+  it('the real count of the contacts database is used when nothing is injected', async () => {
+    const c = await company();
+    await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all);
+    expect(await companyContacts(c.tenantId).list({ includeArchived: true })).toEqual([]);
+  });
+
+  it('a bank session that could not be closed is said in the answer', async () => {
+    const c = await company();
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, { ...deps().all, endBankConnections: async () => ({ connections: 2, sessionsLeftOpen: 1 }) });
+    expect(counts.bankConnections).toBe(2);
+    expect(counts.notErased).toContainEqual({ what: 'bank_sessions_not_closed', count: 1 });
   });
 });
 
@@ -338,7 +594,7 @@ describe('a signed delivery, with the real ledger', () => {
     expect(await db.erasureEvent.findUniqueOrThrow({ where: { eventId } })).toMatchObject({ status: 'failed', attempts: 1, completedAt: null });
     expect(await db.dtTable.count({ where: { id: { in: [c.first.tableId, c.second.tableId] } } })).toBe(2);
 
-    // The ledger remembers the workspaces of the first delivery, so the rows without a stamp are still reached.
+    // The ledger remembers the workspaces this event named before, so the rows without a stamp are still reached.
     const working = deps();
     const done = await deliver(c, eventId, [], working.all);
     expect(done.status).toBe(200);
@@ -346,7 +602,65 @@ describe('a signed delivery, with the real ledger', () => {
     expect(await leftOf(c)).toEqual(NOTHING);
     const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
     expect(row).toMatchObject({ status: 'completed', attempts: 2 });
-    expect((row.runs as Array<{ outcome: string; reason?: string }>).map((r) => [r.outcome, r.reason])).toEqual([['failed', 'stored_file_not_removed'], ['completed', undefined]]);
+    const runs = row.runs as Array<{ outcome: string; reason?: string; detail?: { partial?: { sharedContacts?: number; register?: { storedFiles: number } } } }>;
+    expect(runs.map((r) => [r.outcome, r.reason])).toEqual([['failed', 'stored_file_not_removed'], ['completed', undefined]]);
+    // The failed run says what it had removed before it stopped: the contact was gone, no file yet.
+    expect(runs[0].detail?.partial).toMatchObject({ sharedContacts: 1, register: { storedFiles: 0 } });
+  });
+
+  it('the workspace list belongs to the event: another event for the same company starts from its own', async () => {
+    const c = await company();
+    const ledger = erasureLedger(db);
+    const one = `evt-${randomUUID()}`;
+    expect(await ledger.begin({ eventId: one, kind: 'tenant.erased', companyId: c.tenantId, workspaceIds: ['ws-b', 'ws-a'] })).toEqual({ workspaceIds: ['ws-a', 'ws-b'] });
+    expect(await ledger.begin({ eventId: one, kind: 'tenant.erased', companyId: c.tenantId, workspaceIds: ['ws-c'] })).toEqual({ workspaceIds: ['ws-a', 'ws-b', 'ws-c'] });
+    expect(await ledger.begin({ eventId: `evt-${randomUUID()}`, kind: 'tenant.erased', companyId: c.tenantId, workspaceIds: ['ws-d'] })).toEqual({ workspaceIds: ['ws-d'] });
+  });
+
+  it('an event id recorded for one company is refused for another: 409, nothing erased, the record unchanged', async () => {
+    const c = await company();
+    const other = await company();
+    const eventId = `evt-${randomUUID()}`;
+    expect((await deliver(c, eventId, c.workspaceIds, deps().all)).status).toBe(200);
+
+    const d = deps();
+    const res = await deliver(other, eventId, other.workspaceIds, d.all);
+
+    expect(res).toEqual({ status: 409, body: { error: 'Erasure refused', reason: 'event_of_another_company' } });
+    expect(d.removed).toEqual([]);
+    expect(await db.dtTable.count({ where: { id: other.first.tableId } })).toBe(1);
+    expect(await db.erasureEvent.findUniqueOrThrow({ where: { eventId } })).toMatchObject({ companyId: c.tenantId, attempts: 1, workspaceIds: [...c.workspaceIds].sort() });
+  });
+
+  it('a delivery while a run for the company is at work answers 409 and is recorded; the run in progress completes', async () => {
+    const c = await company();
+    const eventId = `evt-${randomUUID()}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const atWork = new Promise<void>((resolve) => (entered = resolve));
+    const slow = deps({ deleteStoredFile: vi.fn(async () => { entered(); await gate; }) });
+    const running = deliver(c, eventId, c.workspaceIds, slow.all);
+    await atWork;
+
+    expect(await deliver(c, eventId, c.workspaceIds, deps().all)).toEqual({ status: 409, body: { error: 'Erasure failed; will retry', reason: 'already_running' } });
+
+    release();
+    expect((await running).status).toBe(200);
+    const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
+    expect(row).toMatchObject({ status: 'completed', attempts: 2 });
+    expect((row.runs as Array<{ outcome: string; reason?: string }>).map((r) => [r.outcome, r.reason])).toEqual([['failed', 'already_running'], ['completed', undefined]]);
+  });
+
+  it('rows that remain answer 502 "rows_remain" with the table and count in the ledger', async () => {
+    const c = await company();
+    const eventId = `evt-${randomUUID()}`;
+    await withTrigger('workspace_notes', 'BEFORE', `IF OLD.auth_workspace_id = '${c.first.workspaceId}' THEN RETURN NULL; END IF; RETURN OLD;`, async () => {
+      expect(await deliver(c, eventId, c.workspaceIds, deps().all)).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'rows_remain' } });
+    });
+    const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
+    expect(row.status).toBe('failed');
+    expect(row.runs).toEqual([expect.objectContaining({ outcome: 'failed', reason: 'rows_remain', detail: expect.objectContaining({ remaining: { workspace_notes: 1 } }) })]);
   });
 
   it('a conflict answers 502 with the table names in the ledger, and nothing is erased', async () => {
@@ -360,6 +674,7 @@ describe('a signed delivery, with the real ledger', () => {
     expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'rows_of_another_company' } });
     const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
     expect(row.runs).toEqual([expect.objectContaining({ outcome: 'failed', reason: 'rows_of_another_company', detail: { tables: ['workspace_notes'] } })]);
+    expect(await db.dtTable.count({ where: { id: c.second.tableId } })).toBe(1);
     expect(await db.dtTable.count({ where: { id: c.first.tableId } })).toBe(1);
   });
 });

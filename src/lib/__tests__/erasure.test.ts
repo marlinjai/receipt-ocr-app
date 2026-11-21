@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import {
+  ErasureEventMismatchError,
   eraseCompanyContacts,
   exportCoversRegister,
   purgeExpiredRetainedGuests,
@@ -63,6 +64,14 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
     expect(erase).not.toHaveBeenCalled();
   });
 
+  it('a signed body that does not say what kind of event it is answers 400 and is never taken for an erasure', async () => {
+    const erase = vi.fn();
+    const body = delivery({ kind: undefined });
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
+    expect(res).toEqual({ status: 400, body: { error: 'Missing event kind' } });
+    expect(erase).not.toHaveBeenCalled();
+  });
+
   it('acknowledges another event kind without erasing, so it does not wedge auth-brain', async () => {
     const erase = vi.fn();
     const body = delivery({ kind: 'user.erased' });
@@ -116,7 +125,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   const FULL: ErasureCounts = {
     ...COUNTS,
     guestCopiesHeld: 4,
-    register: { tables: 2, receipts: 9, storedFiles: 7, storedFilesKept: 1, records: { receipt_reviews: 6, tax_payments: 3 }, companyExports: 1 },
+    register: { tables: 2, receipts: 9, storedFiles: 7, storedFilesAlreadyGone: 0, storedFilesKept: 1, records: { receipt_reviews: 6, tax_payments: 3 }, companyExports: 1 },
     notErased: [{ what: 'guest_copies_held', count: 4, until: '2036-11-21' }, { what: 'database_backups', days: 30 }],
   };
 
@@ -127,7 +136,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     expect(res.status).toBe(200);
     expect(res.body.notErased).toEqual(FULL.notErased);
     const line = lines.join('\n');
-    expect(line).toContain('removed 2 receipts tables with 9 rows, 7 stored files (1 kept for another company), 9 other rows and 1 export records');
+    expect(line).toContain('removed 2 receipts tables with 9 rows, 7 stored files (0 were gone already, 1 kept because a receipt elsewhere shows them), 9 other rows and 1 export records');
     expect(line).toContain('not erased: guest_copies_held 4, database_backups');
   });
 
@@ -159,6 +168,15 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     expect(erase).not.toHaveBeenCalled();
   });
 
+  it('an event id recorded for another company answers 409 and nothing is erased', async () => {
+    const ledger = fakeLedger({ begin: vi.fn(async () => { throw new ErasureEventMismatchError(); }) });
+    const erase = vi.fn(async () => COUNTS);
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
+    expect(res).toEqual({ status: 409, body: { error: 'Erasure refused', reason: 'event_of_another_company' } });
+    expect(erase).not.toHaveBeenCalled();
+  });
+
   it('an erasure that could not be recorded as completed is not acknowledged', async () => {
     const ledger = fakeLedger({ complete: vi.fn(async () => { throw new Error('database gone'); }) });
     const body = delivery({});
@@ -167,11 +185,15 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   });
 
   it.each([
-    ['StoredFileEraseError', {}, 'stored_file_not_removed', undefined],
-    ['ErasureConflictError', { tables: ['dt_tables'] }, 'rows_of_another_company', { tables: ['dt_tables'] }],
-    ['ErasureIncompleteError', { remaining: { tax_payments: 2 } }, 'rows_remain', { remaining: { tax_payments: 2 } }],
-    ['TypeError', {}, 'failed', undefined],
-  ])('a failed run (%s) answers 502 with its reason code and is recorded as failed', async (name, extra, reason, detail) => {
+    ['StoredFileEraseError', {}, 'stored_file_not_removed', undefined, 502],
+    ['StoredFileEraseError', { partial: { sharedContacts: 3 } }, 'stored_file_not_removed', { partial: { sharedContacts: 3 } }, 502],
+    ['ErasureConflictError', { kind: 'rows_of_another_company', tables: ['dt_tables'] }, 'rows_of_another_company', { tables: ['dt_tables'] }, 502],
+    ['ErasureConflictError', { kind: 'rows_outside_named_workspaces', tables: ['tax_payments'] }, 'rows_outside_named_workspaces', { tables: ['tax_payments'] }, 502],
+    ['ErasureChangedError', {}, 'changed_during_run', undefined, 502],
+    ['ErasureIncompleteError', { remaining: { tax_payments: 2 } }, 'rows_remain', { remaining: { tax_payments: 2 } }, 502],
+    ['ErasureBusyError', {}, 'already_running', undefined, 409],
+    ['TypeError', {}, 'failed', undefined, 502],
+  ])('a failed run (%s) answers non-2xx with its reason code and is recorded as failed', async (name, extra, reason, detail, status) => {
     const ledger = fakeLedger();
     const erase = vi.fn(async () => {
       throw Object.assign(new Error('the file named secret.pdf of Somebody'), { name, ...extra });
@@ -179,7 +201,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const lines: string[] = [];
     const body = delivery({});
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: (l) => lines.push(l) });
-    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason } });
+    expect(res).toEqual({ status, body: { error: 'Erasure failed; will retry', reason } });
     expect(ledger.fail).toHaveBeenCalledWith('evt_1', reason, detail);
     expect(ledger.complete).not.toHaveBeenCalled();
     expect(lines.join('\n')).not.toContain('Somebody');
@@ -298,9 +320,19 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     expect(companyContactsMock).toHaveBeenCalledWith('tnt_a');
     expect(counts.sharedContacts).toBe(2);
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
-      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }, { contactId: { in: ['c1', 'c2'] } }] },
+      // `retainUntil: null`: a name an earlier erasure held is never removed here, only by the purge.
+      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }, { contactId: { in: ['c1', 'c2'] } }], retainUntil: null },
     });
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('the whole company erasure also holds printed names that never had a contact; the erasure of one contact does not', async () => {
+    const db = fakeDb({});
+    await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, undefined, { holdUnlinked: true });
+    expect(db.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }], retainUntil: null });
+    const plain = fakeDb({});
+    await eraseCompanyContacts(plain, 'tnt_a', ['ws_1'], now);
+    expect(plain.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }], retainUntil: null, contactId: { not: null } });
   });
 
   it('fails loudly when the shared contacts database is not configured, and touches nothing', async () => {

@@ -337,22 +337,38 @@ export async function claimDailySync(db: PrismaClient, ts: number): Promise<bool
  * each session is closed at the bank where that works, and every connection
  * of the company and of the workspaces it names is removed, so the daily run
  * reads nothing of it any more. The payments already fetched are the
- * company's records like any other. Repeat-safe. Returns how many were removed.
+ * company's records like any other. Repeat-safe.
+ *
+ * Answers how many connections were removed and how many sessions could NOT be
+ * closed at the bank (the bank refused, or the bank service is not configured).
+ * Such a session is no longer used by anything here and runs out by itself, but
+ * the caller says so instead of reporting a clean end.
  */
-export async function endCompanyBankConnections(db: PrismaClient, deps: BankDeps | null, tenantId: string, workspaceIds: readonly string[]): Promise<number> {
+export async function endCompanyBankConnections(
+  db: PrismaClient,
+  deps: BankDeps | null,
+  tenantId: string,
+  workspaceIds: readonly string[],
+): Promise<{ connections: number; sessionsLeftOpen: number }> {
   const where = { OR: [{ authTenantId: tenantId }, ...(workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [])] };
   const connections = await db.taxBankConnection.findMany({ where, select: { id: true, sessionId: true } });
+  let sessionsLeftOpen = 0;
   for (const c of connections) {
-    if (!c.sessionId || !deps) continue;
+    if (!c.sessionId) continue;
+    if (!deps) {
+      sessionsLeftOpen++;
+      continue;
+    }
     try {
       await deps.api.deleteSession(c.sessionId);
     } catch (e) {
       // The connection goes all the same; a session the bank keeps runs out by itself.
+      sessionsLeftOpen++;
       console.warn(`[bank] closing a session of an erased company failed (${e instanceof BankApiError ? e.kind : 'error'})`);
     }
   }
   const { count } = await db.taxBankConnection.deleteMany({ where: { id: { in: connections.map((c) => c.id) } } });
-  return count;
+  return { connections: count, sessionsLeftOpen };
 }
 
 export type SyncStatus =

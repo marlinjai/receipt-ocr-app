@@ -23,15 +23,20 @@ import { verifyErasureSignature } from './erasure-signature';
  */
 
 /**
- * One thing an erasure did not remove, by code. `guest_copies_held`: printed
- * guest names kept until `until`. `stored_files_shown_by_another_company`:
- * files a receipt of another company still shows. `database_backups`: the dumps
- * of the database, which rotate out after `days` (technical retention, no legal
- * one). `uploads_never_attached_to_a_receipt`: files without a row, which this
- * app cannot assign to a company.
+ * One thing an erasure did not remove, by code.
+ * - `guest_copies_held`: printed guest names kept until `until`.
+ * - `stored_files_shown_elsewhere`: files a receipt outside this erasure (another
+ *   company's, or one in a workspace the delivery did not name) still shows.
+ * - `bank_sessions_not_closed`: sessions at the bank that could not be closed. The
+ *   connection is removed here and nothing is read any more; the consent at the
+ *   bank runs out by itself.
+ * - `database_backups`: the dumps of the database, which rotate out after `days`
+ *   (technical retention, no legal one).
+ * - `uploads_never_attached_to_a_receipt`: files without a row, which this app
+ *   cannot assign to a company.
  */
 export interface NotErased {
-  what: 'guest_copies_held' | 'stored_files_shown_by_another_company' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
+  what: 'guest_copies_held' | 'stored_files_shown_elsewhere' | 'bank_sessions_not_closed' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
   count?: number;
   until?: string;
   days?: number;
@@ -70,9 +75,11 @@ export interface ErasureCounts {
  */
 export interface ErasureLedger {
   /**
-   * Record that a run starts. Answers every workspace id any delivery for this
-   * company has named so far, this one included: a later delivery that names
-   * fewer still reaches the rows without a company stamp.
+   * Record that a run starts. Answers the workspace ids every delivery of THIS
+   * event has named so far, this one included. Auth-brain sends the same body on
+   * every retry; a person who sends the event again by hand may add a workspace.
+   * Rejects with an `ErasureEventMismatchError` when the event id is already
+   * recorded for another company: nothing is erased then.
    */
   begin(event: { eventId: string; kind: string; companyId: string; workspaceIds: readonly string[] }): Promise<{ workspaceIds: string[] }>;
   complete(eventId: string, counts: ErasureCounts): Promise<void>;
@@ -80,13 +87,37 @@ export interface ErasureLedger {
   fail(eventId: string, reason: string, detail?: Record<string, unknown>): Promise<void>;
 }
 
-/** The reason code of a failed run: the error's class, never its message (a message can quote a value). */
-export function erasureFailureReason(e: unknown): { reason: string; detail?: Record<string, unknown> } {
+/** The event id of a delivery is already recorded for another company. */
+export class ErasureEventMismatchError extends Error {
+  constructor() {
+    super('erasure ledger: the event id is recorded for another company');
+    this.name = 'ErasureEventMismatchError';
+  }
+}
+
+/**
+ * The reason code of a failed run: the error's class, never its message (a
+ * message can quote a value). `partial`, when the error carries it, is what the
+ * run had removed before it stopped (counts only).
+ */
+export function erasureFailureReason(e: unknown): { reason: string; status: number; detail?: Record<string, unknown> } {
   const name = (e as Error | undefined)?.name;
-  if (name === 'ErasureConflictError') return { reason: 'rows_of_another_company', detail: { tables: (e as { tables?: string[] }).tables ?? [] } };
-  if (name === 'StoredFileEraseError') return { reason: 'stored_file_not_removed' };
-  if (name === 'ErasureIncompleteError') return { reason: 'rows_remain', detail: { remaining: (e as { remaining?: Record<string, number> }).remaining ?? {} } };
-  return { reason: 'failed' };
+  const partial = (e as { partial?: unknown } | undefined)?.partial;
+  const withPartial = (detail: Record<string, unknown>) => {
+    const all = { ...detail, ...(partial && typeof partial === 'object' ? { partial } : {}) };
+    return Object.keys(all).length > 0 ? all : undefined;
+  };
+  if (name === 'ErasureConflictError') {
+    const conflict = e as { kind?: string; tables?: string[] };
+    return { reason: conflict.kind ?? 'rows_of_another_company', status: 502, detail: withPartial({ tables: conflict.tables ?? [] }) };
+  }
+  if (name === 'ErasureBusyError') return { reason: 'already_running', status: 409 };
+  if (name === 'StoredFileEraseError') return { reason: 'stored_file_not_removed', status: 502, detail: withPartial({}) };
+  if (name === 'ErasureChangedError') return { reason: 'changed_during_run', status: 502, detail: withPartial({}) };
+  if (name === 'ErasureIncompleteError') {
+    return { reason: 'rows_remain', status: 502, detail: withPartial({ remaining: (e as { remaining?: Record<string, number> }).remaining ?? {} }) };
+  }
+  return { reason: 'failed', status: 502, detail: withPartial({}) };
 }
 
 /**
@@ -176,8 +207,22 @@ export type GuestCopyScope =
  * - `covered` (the company's newest export is identical to the register now, see
  *   `exportCoversRegister`): the copies are removed.
  * - Not covered: the copies are held. Their contact link is cleared and
- *   `retain_until` is set `RETENTION_YEARS` ahead. Only copies still linked to a
- *   contact are given a date, so a repeat never restarts a hold.
+ *   `retain_until` is set `RETENTION_YEARS` ahead. Only copies that carry no date
+ *   yet are given one, so a repeat never restarts a hold.
+ *
+ * A copy that is held stays held. `covered` never removes a copy that already
+ * carries a date: only the purge does, after the date. This matters for a repeat
+ * of a company erasure. The first run may have held the names and removed the
+ * receipts; the register is then empty, and an empty register can equal an export
+ * the company took before it recorded its first meal. Without this rule the
+ * second run would read "covered" and delete what the first run held.
+ *
+ * `holdUnlinked` (the company erasure): a printed name that never had a contact
+ * is held too. Its meal goes with the company, so without a date it would stay
+ * for ever. The erasure of one contact leaves such names alone: they are not
+ * that contact's.
+ *
+ * Each case is one statement, so a run that stops never leaves the copies half settled.
  *
  * Removing copies changes the register, so the same export no longer covers a
  * LATER erasure: that one holds until a new export is taken. This is intended.
@@ -187,13 +232,14 @@ export async function settleGuestCopies(
   scope: readonly GuestCopyScope[],
   covered: boolean,
   now: Date = new Date(),
+  options: { holdUnlinked?: boolean } = {},
 ): Promise<{ removed: number; held: number }> {
   if (scope.length === 0) return { removed: 0, held: 0 };
   if (covered) {
-    return { removed: (await db.mealGuest.deleteMany({ where: { OR: [...scope] } })).count, held: 0 };
+    return { removed: (await db.mealGuest.deleteMany({ where: { OR: [...scope], retainUntil: null } })).count, held: 0 };
   }
   const held = await db.mealGuest.updateMany({
-    where: { OR: [...scope], contactId: { not: null } },
+    where: { OR: [...scope], retainUntil: null, ...(options.holdUnlinked ? {} : { contactId: { not: null } }) },
     data: { contactId: null, retainUntil: retainUntilFrom(now) },
   });
   return { removed: 0, held: held.count };
@@ -211,8 +257,10 @@ export async function settleGuestCopies(
  *    held (contact link cleared, `retain_until` set) until the retention period
  *    has passed; `purgeExpiredRetainedGuests` removes them.
  *
- * Repeat-safe: a second run does not restart a hold, because only copies still
- * linked to a contact are given one.
+ * Repeat-safe: a second run does not restart a hold, because only copies
+ * without a date are given one, and it never removes a copy an earlier run held.
+ *
+ * `holdUnlinked`: see `settleGuestCopies`. Set by the whole company erasure.
  */
 export async function eraseCompanyContacts(
   db: PrismaClient,
@@ -220,6 +268,7 @@ export async function eraseCompanyContacts(
   workspaceIds: readonly string[],
   now: Date = new Date(),
   hasher?: RegisterHasher,
+  options: { holdUnlinked?: boolean } = {},
 ): Promise<ErasureCounts> {
   // Start-up applies the layout, but it continues when the database is unreachable
   // then. migrate() is idempotent under a lock, so apply it here too: without it a
@@ -233,7 +282,7 @@ export async function eraseCompanyContacts(
   const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
 
   const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
-  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now);
+  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now, options);
 
   const sharedRemoved = await shared.eraseAll();
 
@@ -267,12 +316,16 @@ export interface ErasureDelivery {
  *
  * - Secret not configured: 503 and nothing is deleted. Auth-brain retries once it is set.
  * - Signature missing or wrong: 401 and nothing is deleted.
- * - Unparseable body: 400. No company id: 400.
+ * - Unparseable body: 400. No event kind: 400. No company id: 400.
  * - Any other event kind: acknowledged as ignored, so it does not wedge auth-brain.
  * - Erasure fails part way: 502 with a reason code, and auth-brain retries; the erasure is
  *   repeat-safe and goes on where it stopped. The reasons: `stored_file_not_removed` (the file
  *   store refused), `rows_of_another_company` (a named workspace holds another company's rows,
- *   nothing was erased), `rows_remain` (the recount found rows of the company), `failed`.
+ *   nothing was erased), `rows_outside_named_workspaces` (rows with the company's stamp lie in a
+ *   workspace the delivery does not name, nothing was erased), `changed_during_run` (a file was
+ *   attached while the run went on), `rows_remain` (the recount found something of the company), `failed`.
+ * - Another run for the same company is going on: 409 `already_running`, nothing is touched.
+ * - The event id is recorded for another company: 409 `event_of_another_company`, nothing is touched.
  * - The run cannot be recorded in the ledger: 502 as well. An erasure nobody can prove is not acknowledged.
  * - 200 only when the recount found nothing of the company but held guest names. The answer
  *   lists under `notErased` what an erasure never removes or did not remove this time.
@@ -307,7 +360,9 @@ export async function receiveErasureDelivery(input: {
   }
 
   const kind = typeof payload.kind === 'string' ? payload.kind : null;
-  if (kind && kind !== 'tenant.erased') return { status: 200, body: { ok: true, ignored: kind } };
+  // A body that does not say what it is is never taken for an erasure.
+  if (!kind) return { status: 400, body: { error: 'Missing event kind' } };
+  if (kind !== 'tenant.erased') return { status: 200, body: { ok: true, ignored: kind } };
 
   const tenantId = typeof payload.tenant_id === 'string' && payload.tenant_id.length > 0 ? payload.tenant_id : null;
   if (!tenantId) return { status: 400, body: { error: 'Missing company id' } };
@@ -323,6 +378,10 @@ export async function receiveErasureDelivery(input: {
     try {
       workspaceIds = (await input.ledger.begin({ eventId: ledgerId, kind: 'tenant.erased', companyId: tenantId, workspaceIds: named })).workspaceIds;
     } catch (e) {
+      if (e instanceof ErasureEventMismatchError) {
+        log(`[erasure] event ${eventId} is recorded for another company, nothing was erased`);
+        return { status: 409, body: { error: 'Erasure refused', reason: 'event_of_another_company' } };
+      }
       log(`[erasure] event ${eventId} could not be recorded (${(e as Error)?.name ?? 'error'}), nothing was erased, auth-brain will retry`);
       return { status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } };
     }
@@ -332,11 +391,11 @@ export async function receiveErasureDelivery(input: {
   try {
     counts = await input.erase(tenantId, workspaceIds);
   } catch (e) {
-    const { reason, detail } = erasureFailureReason(e);
+    const { reason, status, detail } = erasureFailureReason(e);
     log(`[erasure] event ${eventId} failed (${(e as Error)?.name ?? 'error'}, ${reason}${detail ? ` ${JSON.stringify(detail)}` : ''}), auth-brain will retry`);
     // The run failed already; a ledger that cannot take the note must not hide that behind its own error.
     await input.ledger?.fail(ledgerId, reason, detail).catch((le) => log(`[erasure] event ${eventId}: the failure could not be recorded (${(le as Error)?.name ?? 'error'})`));
-    return { status: 502, body: { error: 'Erasure failed; will retry', reason } };
+    return { status, body: { error: 'Erasure failed; will retry', reason } };
   }
 
   const register = counts.register;
@@ -344,7 +403,7 @@ export async function receiveErasureDelivery(input: {
   log(
     `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)` +
       (register
-        ? `, removed ${register.tables} receipts tables with ${register.receipts} rows, ${register.storedFiles} stored files (${register.storedFilesKept} kept for another company), ${records} other rows and ${register.companyExports} export records`
+        ? `, removed ${register.tables} receipts tables with ${register.receipts} rows, ${register.storedFiles} stored files (${register.storedFilesAlreadyGone} were gone already, ${register.storedFilesKept} kept because a receipt elsewhere shows them), ${records} other rows and ${register.companyExports} export records`
         : '') +
       `; not erased: ${(counts.notErased ?? []).map((n) => (n.count === undefined ? n.what : `${n.what} ${n.count}`)).join(', ') || 'not stated'}`,
   );

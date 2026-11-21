@@ -7,9 +7,10 @@
 # every stage passed.
 #
 # The database tests need two throwaway Postgres databases. When
-# TEST_DATABASE_URL and CONTACTS_TEST_DATABASE_URL are set, those are used (they
-# must be local and end in _test, see test/db-guard.ts). Otherwise two Docker
-# containers are started on free local ports and removed at the end.
+# TEST_DATABASE_URL and CONTACTS_TEST_DATABASE_URL are set, those are used.
+# Otherwise two Docker containers are started on free local ports and removed at
+# the end. Either way a stage of its own checks every database URL before the
+# migrations are applied: local host, a name ending in _test (test/db-guard.ts).
 #
 # VERIFY_SKIP_INSTALL=1 skips the dependency install (a checkout that has them).
 set -u
@@ -102,7 +103,13 @@ if stage "test databases" databases; then
   fi
   export TEST_DATABASE_URL CONTACTS_TEST_DATABASE_URL
   export DATABASE_URL="$TEST_DATABASE_URL"
-  if stage "migrations apply" pnpm prisma migrate deploy; then
+  # Before anything writes: refuse every URL that is not a local throwaway database. The guard inside
+  # the database tests would come too late, the migrations run first.
+  if ! stage "test databases are throwaway" pnpm check:databases; then
+    skip "migrations apply" "a database URL is not a local throwaway database"
+    skip "migrations produce the schema" "a database URL is not a local throwaway database"
+    skip "database tests" "a database URL is not a local throwaway database"
+  elif stage "migrations apply" pnpm prisma migrate deploy; then
     # The migrations are written by hand: this fails when what they produce differs from the schema.
     stage "migrations produce the schema" pnpm prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
     stage "database tests" pnpm test:db
@@ -114,6 +121,7 @@ else
   if [ -f "$LOGS/containers" ]; then
     while read -r id; do STARTED_CONTAINERS+=("$id"); done <"$LOGS/containers"
   fi
+  skip "test databases are throwaway" "no test databases"
   skip "migrations apply" "no test databases"
   skip "migrations produce the schema" "no test databases"
   skip "database tests" "no test databases"

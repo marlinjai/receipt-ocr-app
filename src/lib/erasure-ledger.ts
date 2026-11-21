@@ -1,6 +1,6 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { ErasureCounts, ErasureLedger } from './erasure';
+import { ErasureEventMismatchError, type ErasureCounts, type ErasureLedger } from './erasure';
 
 /**
  * The erasure ledger: the table `erasure_events`, one row per delivery of
@@ -11,12 +11,19 @@ import type { ErasureCounts, ErasureLedger } from './erasure';
  * status of our answer, so the counts live here. Ids, counts and reason codes
  * only. A company erasure never deletes this table's rows.
  *
- * The counts of a run are what THAT run removed. A run that fails part way
- * records its reason and no counts, although it may have removed something
- * (contacts, some stored files) before it stopped; the run that completes then
- * counts only what was left. The sum of the recorded counts is therefore a
- * lower bound of what was removed, and "completed" is what says that nothing
- * of the company was left.
+ * What the counts mean. Every run records what THAT run removed: a completed
+ * run its full counts, a failed run its reason and, under `detail.partial`,
+ * what it had removed before it stopped. Only one run per company works at a
+ * time (the lock in company-erasure.ts), and a stored file an earlier run
+ * already removed is counted apart (`storedFilesAlreadyGone`), so the runs of
+ * an event add up without counting anything twice. One case is not recorded: a
+ * run whose process died records nothing, so the sum can be too low, never too
+ * high. The status `completed` is what says that the recount found nothing of
+ * the company.
+ *
+ * An event id belongs to one company. A delivery that carries a recorded id
+ * with another company is refused (`ErasureEventMismatchError`) before anything
+ * is erased.
  *
  * Every write is one statement, so two deliveries of the same event at the same
  * time cannot lose each other's entry.
@@ -36,17 +43,21 @@ export function erasureLedger(db: PrismaClient, now: () => Date = () => new Date
     async begin(event) {
       const ids = [...new Set(event.workspaceIds)].sort();
       const at = now();
-      await db.$executeRaw`
+      // The workspace ids are kept per EVENT, not per company: every retry of one delivery carries
+      // the same body, and a person who sends the event again by hand may name one more workspace.
+      // Another event for the same company starts from its own list.
+      const rows = await db.$queryRaw<Array<{ workspace_ids: string[] | null }>>`
         INSERT INTO erasure_events (event_id, kind, company_id, workspace_ids, status, attempts, received_at, updated_at)
         VALUES (${event.eventId}, ${event.kind}, ${event.companyId}, ${ids}::text[], 'received', 1, ${at}, ${at})
         ON CONFLICT (event_id) DO UPDATE SET
           attempts = erasure_events.attempts + 1,
           workspace_ids = ARRAY(SELECT DISTINCT unnest(COALESCE(erasure_events.workspace_ids, '{}') || EXCLUDED.workspace_ids) ORDER BY 1),
-          updated_at = EXCLUDED.updated_at`;
-      // Every workspace any delivery for this company has named: a "send again" that names
-      // fewer (or a delivery of another request for the same company) still reaches them.
-      const rows = await db.erasureEvent.findMany({ where: { companyId: event.companyId }, select: { workspaceIds: true } });
-      return { workspaceIds: [...new Set(rows.flatMap((r) => r.workspaceIds))].sort() };
+          updated_at = EXCLUDED.updated_at
+        WHERE erasure_events.company_id = EXCLUDED.company_id
+        RETURNING workspace_ids`;
+      // No row came back: the id exists for another company, and the update did not apply.
+      if (rows.length !== 1) throw new ErasureEventMismatchError();
+      return { workspaceIds: [...(rows[0].workspace_ids ?? [])].sort() };
     },
 
     async complete(eventId, counts: ErasureCounts) {

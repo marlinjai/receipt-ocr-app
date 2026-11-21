@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "verify": "bash scripts/verify.sh",
+    "check:databases": "vitest run --config vitest.guard.config.ts",
     "check:roadmap": "npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .",
     "docs:dev": "clearify dev",
     "docs:build": "clearify build",

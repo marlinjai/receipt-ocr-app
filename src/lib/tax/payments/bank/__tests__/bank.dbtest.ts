@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
 import { createAccount, importPayments, loadPayments, type PaymentContext } from '../../service';
 import { BankApiError, type Aspsp, type BankApi, type PsuPresence, type SessionAccount, type StartInput } from '../client';
@@ -801,13 +801,29 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
     const other = await setup('Girokonto Beispielbank', s.bank);
     await connect(other);
-    expect(await endCompanyBankConnections(db, s.deps, 'tenant-not-matching', [s.ctx.workspaceId])).toBe(1);
+    expect(await endCompanyBankConnections(db, s.deps, 'tenant-not-matching', [s.ctx.workspaceId])).toEqual({ connections: 1, sessionsLeftOpen: 0 });
     expect(s.bank.deleted).toContain('sess-1');
     expect(await db.taxBankConnection.count({ where: { authWorkspaceId: s.ctx.workspaceId } })).toBe(0);
     expect(await paymentCount(s.accountId)).toBe(1);
     // The other company keeps its connection; a second erasure removes nothing more.
     expect(await db.taxBankConnection.count({ where: { authWorkspaceId: other.ctx.workspaceId } })).toBe(1);
-    expect(await endCompanyBankConnections(db, s.deps, 'tenant-not-matching', [s.ctx.workspaceId])).toBe(0);
+    expect(await endCompanyBankConnections(db, s.deps, 'tenant-not-matching', [s.ctx.workspaceId])).toEqual({ connections: 0, sessionsLeftOpen: 0 });
+  });
+
+  it('a session the bank does not close is counted, not hidden: the connection goes all the same', async () => {
+    const s = await setup();
+    await connect(s);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const api = Object.assign(Object.create(s.deps.api) as typeof s.deps.api, { deleteSession: async () => { throw new Error('bank answered 500'); } });
+    const refusing = { ...s.deps, api };
+    expect(await endCompanyBankConnections(db, refusing, 'tenant-not-matching', [s.ctx.workspaceId])).toEqual({ connections: 1, sessionsLeftOpen: 1 });
+    expect(await db.taxBankConnection.count({ where: { authWorkspaceId: s.ctx.workspaceId } })).toBe(0);
+    warn.mockRestore();
+
+    // Without the bank service configured the session cannot be closed either.
+    const t = await setup('Zweitkonto Beispielbank', s.bank);
+    await connect(t);
+    expect(await endCompanyBankConnections(db, null, 'tenant-not-matching', [t.ctx.workspaceId])).toEqual({ connections: 1, sessionsLeftOpen: 1 });
   });
 
   it('a daily run whose time runs short starts no further connection and says which wait for the next run', async () => {

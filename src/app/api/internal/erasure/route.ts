@@ -4,7 +4,7 @@ import { eraseCompany } from '@/lib/company-erasure';
 import { receiveErasureDelivery } from '@/lib/erasure';
 import { erasureLedger } from '@/lib/erasure-ledger';
 import { ERASURE_SIGNATURE_HEADER } from '@/lib/erasure-signature';
-import { deleteStoredFile } from '@/lib/stored-files';
+import { eraseStoredFile } from '@/lib/stored-files';
 import { serverBankDeps } from '@/lib/tax/payments/bank/server';
 import { endCompanyBankConnections } from '@/lib/tax/payments/bank/service';
 import { endCompanyAccountShares } from '@/lib/tax/payments/routing';
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     ledger: erasureLedger(prisma),
     erase: (tenantId, workspaceIds) =>
       eraseCompany(prisma, tenantId, workspaceIds, {
-        deleteStoredFile,
+        deleteStoredFile: eraseStoredFile,
         // An erased company's bank feed ends with it: otherwise the daily run would keep reading its account until the consent runs out.
         endBankConnections: (tenant, workspaces) => endCompanyBankConnections(prisma, serverBankDeps(), tenant, workspaces),
         // An erased company also keeps nothing tied to another company's records: its account shares end, with the links that tied the two.

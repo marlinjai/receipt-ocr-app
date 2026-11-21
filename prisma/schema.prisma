@@ -304,8 +304,9 @@ model MealGuest {
 // company is named in `company_id` and not in the stamp `auth_tenant_id`, which
 // marks rows an erasure removes.
 // `status`: received (a run started and did not finish), completed, failed.
-// `runs`: one entry per run, `{ at, outcome, counts?, notErased?, reason? }`.
-// A failed run records its reason and no counts, so the counts are a lower bound.
+// `runs`: one entry per run, `{ at, outcome, counts?, notErased?, reason?, detail? }`.
+// A failed run records its reason and what it had removed before it stopped (`detail.partial`).
+// An event id belongs to one company.
 model ErasureEvent {
   eventId      String    @id @map("event_id")
   kind         String

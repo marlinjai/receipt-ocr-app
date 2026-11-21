@@ -35,8 +35,10 @@ import { verifyErasureSignature } from './erasure-signature';
  *   bank runs out by itself.
  * - `database_backups`: the dumps of the database keep erased rows until they rotate
  *   out: `daysOnServer` on the server, `days` at most in the copies off the server.
- *   Technical retention, no legal one. Stored files have no backup copy: a file
- *   that is erased is gone.
+ *   Technical retention, no legal one. This says nothing about stored files: they are
+ *   deleted from the file store at the erasure, a removal that fails there is retried,
+ *   and a deleted file cannot be restored by us. Whether the object store itself keeps
+ *   old versions or a backup is not known.
  * - `uploads_never_attached_to_a_receipt`: files without a row, which this app
  *   cannot assign to a company.
  */

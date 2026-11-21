@@ -103,7 +103,8 @@ None of this is a legal duty to keep. It is how the systems work, and it ends by
   (`_archived`) that hides it from the lists; an erasure removes archived rows like any other,
   because it drops the whole table.
 After a company erasure this is ALL that is retained, and it is bounded: database backups for
-seven days on the server and at most thirty days off the server; stored files not at all.
+seven days on the server and at most thirty days off the server. Stored files are deleted from
+the file store and cannot be restored by us (see below for what is known and what is not).
 
 - **Database backups.** Dumps of the Receipts database are taken every six hours. They are kept
   seven days on the server and up to thirty days in two copies off the server (an object store
@@ -121,8 +122,12 @@ seven days on the server and at most thirty days off the server; stored files no
   under one workspace of the Receipts application for all companies. Storage Brain's own erasure
   receiver therefore cannot tell which file belongs to which company: only Receipts can, through
   `dt_files`. Receipts must delete the files itself, and it must do so before the rows that name
-  them, or the files can never be found again. Whether Storage Brain removes the object at once
-  or after a grace period, and how long its own backups keep it, was not verified for this plan.
+  them, or the files can never be found again. What a delete does there, read in Storage Brain's
+  code on 2026-11-21: the stored object is removed from the object store right away, and only a
+  metadata row marked as deleted stays; when removing the object fails, a sweeper tries again;
+  there is no grace period in which a deleted file can be restored. So a deleted file cannot be
+  restored by us. Not verified: whether the object store's bucket itself keeps old versions or
+  has a backup. No statement is made about backups of files for that reason.
 
 ## What a company erasure deletes in Receipts
 
@@ -485,7 +490,8 @@ route itself against the real erasure and ledger (the file store refuses, then a
    this no longer arises: see "Decided by the owner".)
 10. **The readme inside the export zip says what is true now.** Keeping records is the company's
     duty; when the company is deleted everything goes; backups keep deleted rows for seven days
-    on the server and at most thirty days off it; stored files have no backup copy; and the rule
+    on the server and at most thirty days off it; stored files are deleted from the file store,
+    a removal that fails is tried again, and a deleted file cannot be restored by us; and the rule
     for one erased contact.
 
 11. **The table removal is written here and does not call the data-table package's
@@ -539,8 +545,9 @@ to it.**
   name that carries a date).
 - How "with a retention period" was read: as the bounded technical retention that exists
   anyway, namely database backups for seven days on the server and at most thirty days off the
-  server (the latter per the backup plan, not verified against the real copies), and no copy at
-  all of stored files. The other possible reading, a grace period before an erasure runs (the
+  server (the latter per the backup plan, not verified against the real copies). Stored files
+  are deleted from the file store and cannot be restored by us; nothing is claimed about a
+  backup of the object store. The other possible reading, a grace period before an erasure runs (the
   data stays restorable for some days after the deletion is asked for), is NOT built and not
   decided.
 - This is the same position as auth-brain's decision 8 of 2026-11-07, now stated for the one
@@ -582,7 +589,7 @@ live), the deploy with migration `0053_erasure_events`, and the decision on the 
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
   production (a decision of its own, nothing is deleted until the owner says yes;
   auth-brain will not send that delivery again by itself, because it was acknowledged);
-  Storage Brain's own delete behaviour and backups are unverified; no
+  whether the object store behind Storage Brain keeps old versions or a backup is unverified; no
   run against a company with many files; uploads that never became a receipt are not counted;
   `user.erased` is not received; auth-brain naming a company's deleted workspaces is being built
   on its branch `fix/erasure-invitations-and-coverage`. For the leftovers of 2026-11-21 the

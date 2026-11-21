@@ -567,7 +567,9 @@ export async function countCompanyRemainder(
  * How long a dump of the database is kept (docs/plans/2026-10-09-production-backups.md): seven
  * days on the server, and at most thirty days in the two copies off the server. This is the
  * whole retention after a company erasure, and it is technical: the dumps rotate out by
- * themselves. Stored files have no such copy.
+ * themselves. It concerns the database only. Stored files are deleted from the file store at the
+ * erasure (a removal that fails there is retried, and a deleted file cannot be restored by us);
+ * whether the object store itself keeps old versions or a backup is not known.
  */
 export const BACKUP_RETENTION_DAYS = 30;
 export const BACKUP_RETENTION_DAYS_ON_SERVER = 7;

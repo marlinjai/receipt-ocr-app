@@ -31,7 +31,10 @@ period is the company's duty, not this app's (the owner's decision of
 - **Database backups** keep the erased rows until they rotate out: seven days on
   the server, and at most thirty days in the two copies off the server (the
   thirty days per the backup plan).
-- **Stored files** have no backup copy. A file that is erased is gone.
+- **Stored files** are deleted from the file store (Storage Brain) when the company is
+  erased. A removal that fails there is tried again, and a deleted file cannot be
+  restored by us. Not known: whether the object store behind it keeps old versions
+  or a backup of its own.
 
 A 200 always lists under `notErased` what an erasure never removes (those
 backups, with both numbers, and uploads that never became a receipt) and what it

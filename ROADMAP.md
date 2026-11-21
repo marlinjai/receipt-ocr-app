@@ -362,7 +362,7 @@
   the regular backups. Those keep the rows anyway: seven days on the server (observed there on
   2026-11-21, oldest dump of 2026-11-14) and up to thirty days in the two copies off the server
   (stated by the backup plan, not verified against the real copies), so until about 2026-12-21,
-  the later and conservative date (technical retention, not a legal duty to keep). The stored files have no such copy: once deleted in Storage Brain they are gone.
+  the later and conservative date (technical retention, not a legal duty to keep). The stored files are another matter: once deleted in Storage Brain they cannot be restored by us.
   Recommended way once the branch above is deployed: one delivery built by hand, which runs the
   tested erasure and records it in the ledger, instead of statements written by hand.
   PRECONDITION for that delivery, from a read-only look at production on 2026-11-21: the body
@@ -378,8 +378,9 @@
   again" cannot do this: it works only for a delivery that failed for good, this one was
   acknowledged, and it cannot add a workspace. Default until the owner answers: nothing is touched.
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
-- [ ] Company erasure, what is not verified yet: whether Storage Brain removes a deleted file at
-  once or after a grace period, and how long its own backups keep it; a run against a company with
+- [ ] Company erasure, what is not verified yet: whether the object store behind Storage Brain
+  keeps old versions of a deleted file or has a backup of its own (its code removes the object
+  right away and retries a removal that fails, read on 2026-11-21); a run against a company with
   many stored files (auth-brain waits ten seconds for an answer, the run goes on and the next
   delivery finishes it: reasoned, not measured); how many stored uploads never became a receipt
   and so belong to no company; and that Receipts does not receive a person's erasure

@@ -345,14 +345,18 @@
   `dt_rows` is empty for every company); `dt_files` 5 rows, 481,840 bytes, on those 6 receipts,
   whose 5 stored objects live in Storage Brain; `dt_relations` 0, `dt_row_select_values` 0;
   `sheet_import_configs` 1 with `sheet_import_rows` 53 (6 of them point at receipts that still
-  exist). Still to count before the yes: `select_options` of those tables' columns. Must stay
-  untouched: the 4 receipts tables of other companies. Precondition: a dedicated dump
+  exist). Not counted: the stored objects in Storage Brain behind the 5 `dt_files` rows (5
+  expected) and the `select_options` of those tables' columns. Must stay untouched: the 4 receipts
+  tables of other companies. The erasure on the branch finds the two tables although their stamp
+  is empty, through the workspace ids in the delivery (a database test covers exactly that case).
+  Precondition: a dedicated dump
   of exactly the affected rows, taken first and stored on the production host under
   `/root/backups/2026-11-21-receipts-erasure-leftovers/` (the place the company erasure of
   2026-11-05 used), readable by root only, and deleted on 2026-12-21 so that it does not outlive
-  the regular backups. Those keep the rows anyway: seven days on the server and up to thirty days
-  in the two copies off the server, so until about 2026-12-21 (technical retention, not a legal
-  duty to keep). The stored files have no such copy: once deleted in Storage Brain they are gone.
+  the regular backups. Those keep the rows anyway: seven days on the server (observed there on
+  2026-11-21, oldest dump of 2026-11-14) and up to thirty days in the two copies off the server
+  (stated by the backup plan, not verified against the real copies), so until about 2026-12-21,
+  the later and conservative date (technical retention, not a legal duty to keep). The stored files have no such copy: once deleted in Storage Brain they are gone.
   Recommended way once the branch above is deployed: deliver the erasure to Receipts once more
   (the body auth-brain stored for that delivery, signed with the webhook secret through the secrets
   proxy), which runs the tested erasure and records it in the ledger, instead of statements written

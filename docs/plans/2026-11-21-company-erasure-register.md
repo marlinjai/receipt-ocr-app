@@ -32,7 +32,7 @@ still holds that company's data. Read-only inventory of production, 2026-11-21 1
 | the physical tables `tbl_<table id>` with the receipt rows | 6 rows in one, 0 in the other | table id; no foreign key to `dt_tables` |
 | `dt_rows` (the older shared layout) | 0, empty for every company | table id |
 | `dt_files` | 5 (481,840 bytes) on those 6 receipts | row id; no foreign key |
-| stored receipt files in Storage Brain | the 5 objects those rows name | file id on `dt_files` |
+| stored receipt files in Storage Brain | not counted there; 5 expected, one per `dt_files` row | file id on `dt_files` |
 | `dt_relations`, `dt_row_select_values` | 0 | row id |
 | `select_options` | not counted | column id |
 | `sheet_import_configs` | 1 (the only one in the database) | workspace |
@@ -42,7 +42,8 @@ Other companies own 4 receipts tables, which must stay untouched.
 
 Two things in this inventory decide the design below. The two receipts tables carry no company
 stamp, so an erasure by stamp alone misses them and everything below them: the workspace ids
-auth-brain names are needed. And neither the physical tables nor `dt_files` hang on a foreign
+auth-brain names are needed (the erasure built here takes them from the delivery, and a database
+test covers a workspace without any stamp). And neither the physical tables nor `dt_files` hang on a foreign
 key, so nothing cascades to them: they are removed explicitly, files first.
 
 The receiver's log line for that delivery was "removed 0 guest copies, held 0 (export coverage:
@@ -98,7 +99,11 @@ None of this is a legal duty to keep. It is how the systems work, and it ends by
 - **Database backups.** Dumps of the Receipts database are taken every six hours. They are kept
   seven days on the server and up to thirty days in two copies off the server (an object store
   in the European Union and a second machine), per `docs/plans/2026-10-09-production-backups.md`.
-  So data erased on 2026-11-21 is in backups until about 2026-12-21, not about 2026-11-28. The
+  Observed on the server on 2026-11-21: the seven days of local dumps (oldest of 2026-11-14).
+  The thirty days off the server are stated by that plan and were not verified against the real
+  copies. So data erased on 2026-11-21 is in backups until about 2026-11-28 on the server and,
+  by the plan, until about 2026-12-21 off the server. This document uses the later date, the
+  conservative one. The
   data processing agreement (section 11.2) allows this: data in backups goes when the backup is
   replaced in the regular rotation, at the latest 90 days after the deletion. A restore from a
   backup taken before an erasure brings the erased rows back; the erasure then has to be
@@ -301,7 +306,7 @@ shared with another company is kept; rows without a stamp need the workspace ids
 7. **An answer is 200 only after a recount found nothing**, and it always carries `notErased`.
    Auth-brain's contract stays as it is (it reads the status only), so nothing has to change
    there for this to be honest.
-8. **Backups are not rewritten.** They rotate out within thirty days, which the data processing
+8. **Backups are not rewritten.** They rotate out within thirty days (by the backup plan, see above), which the data processing
    agreement allows. Rewriting dumps would break the recovery they exist for.
 9. **A printed guest name without a contact also gets its date.** The old rule dated only names
    still linked to a contact; an unlinked name would have stayed for ever once its meal is gone.

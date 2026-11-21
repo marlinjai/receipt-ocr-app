@@ -820,6 +820,16 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     expect(await db.taxBankConnection.count({ where: { authWorkspaceId: s.ctx.workspaceId } })).toBe(0);
     warn.mockRestore();
 
+    // A bank that never answers does not hold the erasure up: past the time limit the session counts as left open.
+    const u = await setup('Drittkonto Beispielbank', s.bank);
+    await connect(u);
+    const silent = { ...u.deps, api: Object.assign(Object.create(u.deps.api) as typeof u.deps.api, { deleteSession: () => new Promise<void>(() => {}) }) };
+    const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const started = Date.now();
+    expect(await endCompanyBankConnections(db, silent, 'tenant-not-matching', [u.ctx.workspaceId], { closeTimeoutMs: 200 })).toEqual({ connections: 1, sessionsLeftOpen: 1 });
+    expect(Date.now() - started).toBeLessThan(3000);
+    quiet.mockRestore();
+
     // Without the bank service configured the session cannot be closed either.
     const t = await setup('Zweitkonto Beispielbank', s.bank);
     await connect(t);

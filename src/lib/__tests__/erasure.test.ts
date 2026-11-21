@@ -121,6 +121,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
       begin: vi.fn(async (e: { workspaceIds: readonly string[] }) => ({ workspaceIds: [...e.workspaceIds] })),
       acquire: vi.fn(async (): Promise<ErasureLease | null> => LEASE),
       busy: vi.fn(async () => {}),
+      release: vi.fn(async () => {}),
       complete: vi.fn(async () => {}),
       fail: vi.fn(async () => {}),
       ...over,
@@ -188,6 +189,8 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const body = delivery({});
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => COUNTS, ledger, log: () => {} });
     expect(res.status).toBe(502);
+    // The record failed, but the lease is given back: other erasures need not wait for it to run out.
+    expect(ledger.release).toHaveBeenCalledWith('evt_1', LEASE);
   });
 
   it.each([
@@ -196,6 +199,8 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     ['ErasureConflictError', { kind: 'rows_of_another_company', tables: ['dt_tables'] }, 'rows_of_another_company', { tables: ['dt_tables'] }, 502],
     ['ErasureConflictError', { kind: 'rows_outside_named_workspaces', tables: ['tax_payments'], workspaces: ['ws_9'] }, 'rows_outside_named_workspaces', { tables: ['tax_payments'], workspaces: ['ws_9'] }, 502],
     ['ErasureChangedError', {}, 'changed_during_run', undefined, 502],
+    ['ErasureTablesBusyError', {}, 'tables_busy', undefined, 502],
+    ['ErasureIncompleteError', { remaining: { dt_files: 1 }, fileReferences: [{ referenceId: 'ref_1', fileId: 'file_1' }] }, 'rows_remain', { remaining: { dt_files: 1 }, fileReferences: [{ referenceId: 'ref_1', fileId: 'file_1' }] }, 502],
     ['ErasureIncompleteError', { remaining: { tax_payments: 2 } }, 'rows_remain', { remaining: { tax_payments: 2 } }, 502],
     ['ErasureLeaseLostError', { partial: { sharedContacts: 1 } }, 'lease_lost', { partial: { sharedContacts: 1 } }, 502],
     ['TypeError', {}, 'failed', undefined, 502],
@@ -264,6 +269,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const body = delivery({});
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => { throw new Error('x'); }, ledger, log: () => {} });
     expect(res.status).toBe(502);
+    expect(ledger.release).toHaveBeenCalledWith('evt_1', LEASE);
   });
 });
 
@@ -379,6 +385,24 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     expect(db.mealGuest.updateMany).toHaveBeenCalledWith({ where: { contactId: { in: ['c1', 'c2'] } }, data: { contactId: null } });
     expect(counts.guestLinksCleared).toBe(0);
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the checkpoint between its steps and stops where it rejects: before the copies are settled, nothing is settled', async () => {
+    const shared = sharedWith(['c1']);
+    companyContactsMock.mockReturnValue(shared);
+    const db = fakeDb({});
+    let calls = 0;
+    const checkpoint = vi.fn(async () => {
+      if (++calls === 2) throw new Error('lease gone');
+    });
+    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'), { checkpoint })).rejects.toThrow('lease gone');
+    expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
+    expect(shared.eraseAll).not.toHaveBeenCalled();
+
+    const through = vi.fn(async () => {});
+    await eraseCompanyContacts(fakeDb({}), 'tnt_a', ['ws_1'], now, registerIs('h1'), { checkpoint: through });
+    expect(through).toHaveBeenCalledTimes(3);
   });
 
   it('the whole company erasure also holds printed names that never had a contact; the erasure of one contact does not', async () => {

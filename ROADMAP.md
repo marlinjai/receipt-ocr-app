@@ -331,7 +331,7 @@
   `feat/company-erasure-register` on 2026-11-21 and NOT pushed or deployed: the receiver now removes
   the receipts tables, rows, stored files and every row with the company stamp, records each run in
   a new ledger table (`erasure_events`, migration 0053), and answers 200 only after a recount, with
-  a list of what an erasure does not remove. Reviewed independently twice on 2026-11-21 (14 and then 7 findings,
+  a list of what an erasure does not remove. Reviewed independently three times on 2026-11-21 (14, 7 and 5 findings,
   all fixed on the branch). Open before it ships: the owner's answer to the one open question of
   the plan (whether a company erasure still holds printed guest names for ten years).
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)

@@ -110,6 +110,11 @@ export interface ErasureLedger {
   complete(eventId: string, counts: ErasureCounts, lease?: ErasureLease): Promise<void>;
   /** `reason` is a code, `detail` table names, ids and counts. Never a message text. Gives the lease back. */
   fail(eventId: string, reason: string, detail?: Record<string, unknown>, lease?: ErasureLease): Promise<void>;
+  /**
+   * Give the lease back and nothing else. For the case that recording a run failed: without this
+   * the lease would stay in force until it runs out, and every erasure would answer 409 until then.
+   */
+  release(eventId: string, lease: ErasureLease): Promise<void>;
 }
 
 /** The lease of a run ran out or was taken: the run stops at its next step. */
@@ -153,8 +158,16 @@ export function erasureFailureReason(e: unknown): { reason: string; status: numb
   if (name === 'StoredFileEraseError') return { reason: 'stored_file_not_removed', status: 502, detail: withPartial({}) };
   if (name === 'ErasureChangedError') return { reason: 'changed_during_run', status: 502, detail: withPartial({}) };
   if (name === 'ErasureIncompleteError') {
-    return { reason: 'rows_remain', status: 502, detail: withPartial({ remaining: (e as { remaining?: Record<string, number> }).remaining ?? {} }) };
+    const left = e as { remaining?: Record<string, number>; fileReferences?: unknown[] };
+    return {
+      reason: 'rows_remain',
+      status: 502,
+      // File references left below erased receipts are named (ids only): the next run cannot find
+      // them any more, so this is what an operator has to go by.
+      detail: withPartial({ remaining: left.remaining ?? {}, ...(left.fileReferences?.length ? { fileReferences: left.fileReferences } : {}) }),
+    };
   }
+  if (name === 'ErasureTablesBusyError') return { reason: 'tables_busy', status: 502, detail: withPartial({}) };
   return { reason: 'failed', status: 502, detail: withPartial({}) };
 }
 
@@ -299,6 +312,8 @@ export async function settleGuestCopies(
  * without a date are given one, and it never removes a copy an earlier run held.
  *
  * `holdUnlinked`: see `settleGuestCopies`. Set by the whole company erasure.
+ * `checkpoint`: called between the steps (before the register is hashed, before the
+ * copies are settled, before the contacts go); it rejects when the run may not go on.
  */
 export async function eraseCompanyContacts(
   db: PrismaClient,
@@ -306,7 +321,7 @@ export async function eraseCompanyContacts(
   workspaceIds: readonly string[],
   now: Date = new Date(),
   hasher?: RegisterHasher,
-  options: { holdUnlinked?: boolean } = {},
+  options: { holdUnlinked?: boolean; checkpoint?: () => Promise<void> } = {},
 ): Promise<ErasureCounts> {
   // Start-up applies the layout, but it continues when the database is unreachable
   // then. migrate() is idempotent under a lock, so apply it here too: without it a
@@ -321,8 +336,10 @@ export async function eraseCompanyContacts(
   const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] }, authTenantId: null }] : [];
   const scope = [{ authTenantId: tenantId }, ...workspaceScope];
 
+  await options.checkpoint?.();
   const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
-  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now, options);
+  await options.checkpoint?.();
+  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now, { holdUnlinked: options.holdUnlinked });
 
   // A printed copy OUTSIDE that scope can still name one of the company's contacts: a meal of another
   // company, or of a workspace the delivery does not name (possible after a workspace changed company
@@ -331,6 +348,7 @@ export async function eraseCompanyContacts(
   const guestLinksCleared =
     sharedIds.length > 0 ? (await db.mealGuest.updateMany({ where: { contactId: { in: sharedIds } }, data: { contactId: null } })).count : 0;
 
+  await options.checkpoint?.();
   const sharedRemoved = await shared.eraseAll();
 
   return {
@@ -371,7 +389,9 @@ export interface ErasureDelivery {
  *   store refused), `rows_of_another_company` (a named workspace holds another company's rows,
  *   nothing was erased), `rows_outside_named_workspaces` (rows with the company's stamp lie in a
  *   workspace the delivery does not name, nothing was erased), `changed_during_run` (a file was
- *   attached while the run went on), `rows_remain` (the recount found something of the company), `failed`.
+ *   attached while the run went on), `tables_busy` (another writer held the file references longer
+ *   than the run waits; nothing of that table was touched), `rows_remain` (the recount found
+ *   something of the company), `failed`.
  * - Another erasure (of any company) is at work: 409 `already_running`, nothing is touched and the
  *   event keeps its status. Auth-brain tries again later.
  * - The run lost its lease (it ran out, for example after the process stalled): 502 `lease_lost`;
@@ -455,6 +475,11 @@ export async function receiveErasureDelivery(input: {
     }
   }
   const held = lease ?? undefined;
+  /** The record of the run could not be written: give at least the lease back, so other erasures need not wait for it to run out. */
+  const giveBack = async () => {
+    if (!held || !input.ledger) return;
+    await input.ledger.release(ledgerId, held).catch((le) => log(`[erasure] event ${eventId}: the lease could not be given back (${(le as Error)?.name ?? 'error'}), it runs out by itself`));
+  };
 
   let counts: ErasureCounts;
   try {
@@ -465,7 +490,10 @@ export async function receiveErasureDelivery(input: {
     const { reason, status, detail } = erasureFailureReason(e);
     log(`[erasure] event ${eventId} failed (${(e as Error)?.name ?? 'error'}, ${reason}${detail ? ` ${JSON.stringify(detail)}` : ''}), auth-brain will retry`);
     // The run failed already; a ledger that cannot take the note must not hide that behind its own error.
-    await input.ledger?.fail(ledgerId, reason, detail, held).catch((le) => log(`[erasure] event ${eventId}: the failure could not be recorded (${(le as Error)?.name ?? 'error'})`));
+    await input.ledger?.fail(ledgerId, reason, detail, held).catch(async (le) => {
+      log(`[erasure] event ${eventId}: the failure could not be recorded (${(le as Error)?.name ?? 'error'})`);
+      await giveBack();
+    });
     return { status, body: { error: 'Erasure failed; will retry', reason } };
   }
 
@@ -483,6 +511,7 @@ export async function receiveErasureDelivery(input: {
       await input.ledger.complete(ledgerId, counts, held);
     } catch (e) {
       log(`[erasure] event ${eventId} erased but could not be recorded (${(e as Error)?.name ?? 'error'}), auth-brain will retry`);
+      await giveBack();
       return { status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } };
     }
   }

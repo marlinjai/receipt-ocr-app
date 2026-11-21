@@ -40,12 +40,31 @@ The reason is in the answer and in the ledger.
 | `rows_of_another_company` | A workspace the delivery names holds rows stamped with another company. Nothing was erased. The ledger names the tables and the workspace ids. | Find out whose the workspace is. If it was moved, finish the move (`docs/operations/workspace-move.md`), then send again. |
 | `rows_outside_named_workspaces` | Rows stamped with the erased company lie in a workspace the delivery does not name, or the delivery names no workspace at all while the company has rows here. Nothing was erased. The ledger names the tables and the workspace ids the rows lie in. | Two causes. The workspace was moved to another company and the rows were not restamped: finish the move, then send again. Or the company deleted that workspace before it was erased and the delivery did not name it: send a delivery by hand that names it too (see below). |
 | `changed_during_run` | A file was attached to a receipt of the company while the run went on. | Send again; the next run removes it. |
-| `rows_remain` | The recount after the run still found something of the company. The ledger names the tables and counts. | Send again once. If it repeats, a table is not covered: this is a defect, look at the named table. |
-| `already_running` | Another erasure, of any company, is at work. Only one works at a time. The delivery touched nothing and the event keeps its status; the ledger notes a "busy" entry. | Nothing; auth-brain's retry runs it. If it repeats for more than a few minutes with no erasure at work, a run died: its lease runs out by itself after three minutes. |
+| `tables_busy` | A receipts table could not be locked within five seconds, because another company's write to the file references was still open. Nothing of that table was touched; the run does not wait longer so that it never stalls other companies' uploads. | Nothing; auth-brain's retry runs it. If it keeps repeating, look for a long-running transaction in the database. |
+| `rows_remain` | The recount after the run still found something of the company. The ledger names the tables and counts. | Send again once. If it repeats, a table is not covered: this is a defect, look at the named table. One case needs a person at once: `dt_files` among the tables, see "A file reference left behind" below. |
+| `already_running` | Another erasure, of any company, is at work. Only one works at a time. The delivery touched nothing and the event keeps its status; the ledger notes a "busy" entry. | Nothing; auth-brain's retry runs it. A lease heals by itself: a run that could not record its result gives the lease back at once where it can, and a lease nobody renews (the process died) runs out after three minutes. So a 409 with no erasure at work lasts three minutes at most. |
 | `lease_lost` | The run's lease ran out (the process stalled) or another run took it. The run stopped at its next step; the ledger says what it had removed. | Send again; the next run goes on. |
 | `event_of_another_company` | The delivery id is recorded for another company. | A defect on the sending side or a hand-made delivery with a reused id. Do not force it. |
 | `ledger_unavailable` | The run could not be recorded or its lease could not be taken. Nothing was erased. | Check that migration `0053_erasure_events` is applied and the database is reachable, then send again. |
 | `failed` | Anything else: the database or the contacts database was unreachable, or a defect. The ledger says what the run had removed before it stopped. | Read the `[erasure]` log line of that delivery for the error's class, fix the cause, send again. A repeat is always safe. |
+
+## A file reference left behind
+
+When the failed run's `detail` carries `fileReferences` (with `dt_files` under `remaining`), a file
+was attached to a receipt of the company in the last instant of the run, after the receipt's table
+was gone. Each entry names the reference (`referenceId`, the `id` in `dt_files`) and the stored
+file (`fileId`). No later run can find it, because the receipt it names no longer exists, and the
+next delivery answers 200 without it. So it is removed by hand, with the owner's yes because it is
+a deletion on production: delete the stored file in Storage Brain by its `fileId`, then the row in
+`dt_files` by its `referenceId`. Check first that no other row of `dt_files` names the same
+`fileId`:
+
+```sql
+SELECT id, row_id FROM dt_files WHERE file_id = '<file id>';
+```
+
+It takes a write by a member of a company that no longer has access, in a window of milliseconds;
+it is listed here because it would otherwise leave a stored file nobody knows about.
 
 ## Reading the record, and finding the workspaces
 

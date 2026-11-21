@@ -16,7 +16,7 @@ const eraseCompany = vi.fn();
 const endCompanyBankConnections = vi.fn();
 const endCompanyAccountShares = vi.fn();
 const eraseStoredFile = vi.fn();
-const ledger = { begin: vi.fn(), acquire: vi.fn(), busy: vi.fn(), complete: vi.fn(), fail: vi.fn() };
+const ledger = { begin: vi.fn(), acquire: vi.fn(), busy: vi.fn(), release: vi.fn(), complete: vi.fn(), fail: vi.fn() };
 const lease = { token: 'lease-1', renew: vi.fn() };
 
 vi.mock('next/server', () => ({ NextResponse: { json: (body: unknown, init?: ResponseInit) => Response.json(body, init) } }));

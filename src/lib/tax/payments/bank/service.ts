@@ -342,14 +342,19 @@ export async function claimDailySync(db: PrismaClient, ts: number): Promise<bool
  * Answers how many connections were removed and how many sessions could NOT be
  * closed at the bank (the bank refused, or the bank service is not configured).
  * Such a session is no longer used by anything here and runs out by itself, but
- * the caller says so instead of reporting a clean end.
+ * the caller says so instead of reporting a clean end. A bank that does not
+ * answer within `closeTimeoutMs` counts the same: an erasure never waits on it.
  */
+export const BANK_SESSION_CLOSE_TIMEOUT_MS = 10_000;
+
 export async function endCompanyBankConnections(
   db: PrismaClient,
   deps: BankDeps | null,
   tenantId: string,
   workspaceIds: readonly string[],
+  options: { closeTimeoutMs?: number } = {},
 ): Promise<{ connections: number; sessionsLeftOpen: number }> {
+  const closeTimeoutMs = options.closeTimeoutMs ?? BANK_SESSION_CLOSE_TIMEOUT_MS;
   const where = { OR: [{ authTenantId: tenantId }, ...(workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [])] };
   const connections = await db.taxBankConnection.findMany({ where, select: { id: true, sessionId: true } });
   let sessionsLeftOpen = 0;
@@ -359,12 +364,20 @@ export async function endCompanyBankConnections(
       sessionsLeftOpen++;
       continue;
     }
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await deps.api.deleteSession(c.sessionId);
+      await Promise.race([
+        deps.api.deleteSession(c.sessionId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('the bank did not answer in time')), closeTimeoutMs);
+        }),
+      ]);
     } catch (e) {
       // The connection goes all the same; a session the bank keeps runs out by itself.
       sessionsLeftOpen++;
       console.warn(`[bank] closing a session of an erased company failed (${e instanceof BankApiError ? e.kind : 'error'})`);
+    } finally {
+      clearTimeout(timer);
     }
   }
   const { count } = await db.taxBankConnection.deleteMany({ where: { id: { in: connections.map((c) => c.id) } } });

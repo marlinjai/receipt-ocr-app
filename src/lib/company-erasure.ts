@@ -142,13 +142,36 @@ export class ErasureChangedError extends Error {
   }
 }
 
-/** Something of the company was still there after the run. Table names and counts only. */
+/**
+ * A table could not be locked within `TABLE_LOCK_WAIT_MS`: another writer held it or the file
+ * references. Nothing of that table was touched; the next run tries again.
+ */
+export class ErasureTablesBusyError extends Error {
+  constructor(cause: unknown) {
+    super('company erasure: a table stayed locked by another writer', { cause });
+    this.name = 'ErasureTablesBusyError';
+  }
+}
+
+/** One file reference left below an erased receipt: its own id and the id of the stored file it names. */
+export interface LeftFileReference {
+  referenceId: string;
+  fileId: string;
+}
+
+/** Something of the company was still there after the run. Table names, counts and ids only. */
 export class ErasureIncompleteError extends Error {
   readonly remaining: Record<string, number>;
-  constructor(remaining: Record<string, number>) {
+  /**
+   * File references left below receipts this run removed (at most `LEFT_REFERENCES_NAMED`). The next
+   * run cannot find them, because the rows they name are gone, so they are named here for a person.
+   */
+  readonly fileReferences: LeftFileReference[];
+  constructor(remaining: Record<string, number>, fileReferences: LeftFileReference[] = []) {
     super('company erasure: rows of the company remain after the run');
     this.name = 'ErasureIncompleteError';
     this.remaining = remaining;
+    this.fileReferences = fileReferences;
   }
 }
 
@@ -186,6 +209,8 @@ export interface CompanyErasureDeps {
    * the run then stops there, and what it removed so far is reported as `partial`.
    */
   checkpoint?: () => Promise<void>;
+  /** How long the removal of one table waits for a lock another writer holds. Injected in tests. */
+  tableLockWaitMs?: number;
   /** How many contacts the company still has in the shared contacts database. Injected in tests. */
   countContacts?: (tenantId: string) => Promise<number>;
   now?: Date;
@@ -262,6 +287,14 @@ const CONFLICT_WORKSPACES_NAMED = 50;
 
 /** Lists longer than this are split, so no statement carries more parameters than Postgres takes. */
 const ID_CHUNK = 5000;
+/**
+ * How long the removal of one table waits for a lock. Writers of every company attach and detach
+ * files through the same file reference table, so the run must neither stall them for long nor
+ * queue behind one of them without end. Past this it stops as retryable (`ErasureTablesBusyError`).
+ */
+const TABLE_LOCK_WAIT_MS = 5000;
+/** The most left file references an incomplete run names. */
+const LEFT_REFERENCES_NAMED = 50;
 /** Stored files removed at the same time. */
 const FILE_DELETES_AT_ONCE = 4;
 function chunks<T>(items: readonly T[], size = ID_CHUNK): T[][] {
@@ -305,6 +338,12 @@ async function rowsLivingElsewhere(db: Db, rowIds: readonly string[], erasedTabl
     }
   }
   return living;
+}
+
+/** Postgres gave up waiting for a lock (`lock_timeout`, error 55P03). */
+function isLockTimeout(e: unknown): boolean {
+  const error = e as { code?: string; meta?: { code?: string }; message?: string } | undefined;
+  return error?.meta?.code === '55P03' || error?.code === '55P03' || /55P03|lock timeout/i.test(error?.message ?? '');
 }
 
 /** What `eraseCompanyRegister` removed, by id, so the recount can look for what should be gone. Never leaves this module. */
@@ -382,7 +421,7 @@ export async function eraseCompanyRegister(
   db: PrismaClient,
   tenantId: string,
   workspaceIds: readonly string[],
-  deps: Pick<CompanyErasureDeps, 'deleteStoredFile' | 'checkpoint'>,
+  deps: Pick<CompanyErasureDeps, 'deleteStoredFile' | 'checkpoint' | 'tableLockWaitMs'>,
   counts: RegisterErasureCounts = emptyRegisterCounts(),
 ): Promise<{ counts: RegisterErasureCounts; erased: ErasedHandles }> {
   const classes = classifyModels();
@@ -404,8 +443,13 @@ export async function eraseCompanyRegister(
   for (const table of tables) {
     await deps.checkpoint?.();
     const listed = rowIdsByTable.get(table.id) ?? [];
-    const removedRows = await db.$transaction(
+    const removedRows = await db
+      .$transaction(
       async (tx) => {
+        // Every lock this transaction asks for gives up after a few seconds instead of waiting: the
+        // file references are shared by all companies, and a run that queued behind a slow writer
+        // would make every later writer queue behind it.
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.max(1, Math.floor(deps.tableLockWaitMs ?? TABLE_LOCK_WAIT_MS))}`);
         // The rows are read again under a lock that keeps every writer out until the table is gone:
         // a receipt written since the first listing is removed like the others, not left behind.
         const present = await physicalTableExists(tx, table.id);
@@ -437,7 +481,11 @@ export async function eraseCompanyRegister(
         return rowIds;
       },
       { maxWait: 10_000, timeout: 60_000 },
-    );
+      )
+      .catch((e) => {
+        if (isLockTimeout(e)) throw new ErasureTablesBusyError(e);
+        throw e;
+      });
     for (const id of removedRows) erasedRows.add(id);
     counts.tables++;
     counts.receipts += removedRows.length;
@@ -488,8 +536,9 @@ export async function countCompanyRemainder(
   tenantId: string,
   workspaceIds: readonly string[],
   erased: ErasedHandles = { tableIds: [], rowIds: [] },
-): Promise<{ remaining: Record<string, number>; heldGuestCopies: number }> {
+): Promise<{ remaining: Record<string, number>; heldGuestCopies: number; fileReferences: LeftFileReference[] }> {
   const classes = classifyModels();
+  const fileReferences: LeftFileReference[] = [];
   const remaining: Record<string, number> = {};
   const add = (table: string, n: number) => {
     if (n > 0) remaining[table] = (remaining[table] ?? 0) + n;
@@ -507,7 +556,9 @@ export async function countCompanyRemainder(
   add('company_exports', await db.companyExport.count({ where: { authTenantId: tenantId } }));
 
   for (const part of chunks(erased.rowIds)) {
-    add('dt_files', await db.dtFile.count({ where: { rowId: { in: part } } }));
+    const left = await db.dtFile.findMany({ where: { rowId: { in: part } }, select: { id: true, fileId: true }, orderBy: { id: 'asc' } });
+    add('dt_files', left.length);
+    for (const ref of left) if (fileReferences.length < LEFT_REFERENCES_NAMED) fileReferences.push({ referenceId: ref.id, fileId: ref.fileId });
     add('dt_relations', await db.dtRelation.count({ where: { OR: [{ sourceRowId: { in: part } }, { targetRowId: { in: part } }] } }));
     add('dt_row_select_values', await db.dtRowSelectValue.count({ where: { rowId: { in: part } } }));
   }
@@ -517,7 +568,7 @@ export async function countCompanyRemainder(
     add('dt_views', await db.dtView.count({ where: { tableId: { in: erased.tableIds } } }));
     for (const tableId of erased.tableIds) add('receipt_row_tables', (await physicalTableExists(db, tableId)) ? 1 : 0);
   }
-  return { remaining, heldGuestCopies };
+  return { remaining, heldGuestCopies, fileReferences };
 }
 
 /**
@@ -564,12 +615,13 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
     await checkpoint();
     await assertStampsMatchDelivery(db, tenantId, workspaceIds);
 
-    const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, now, deps.hasher, { holdUnlinked: true });
+    const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, now, deps.hasher, { holdUnlinked: true, checkpoint });
     Object.assign(partial, contacts);
 
     await checkpoint();
     const bank = await deps.endBankConnections(tenantId, workspaceIds);
     partial.bankConnections = bank.connections;
+    await checkpoint();
     const shares = await deps.endAccountShares(tenantId, workspaceIds);
     Object.assign(partial, { accountShares: shares.shares, crossCompanyLinks: shares.links, crossCompanyRecords: shares.records });
 
@@ -578,10 +630,10 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
     const { counts: register, erased } = await eraseCompanyRegister(db, tenantId, workspaceIds, deps, partial.register);
 
     // No checkpoint from here on: everything is removed, and what is left is to count it and say so.
-    const { remaining, heldGuestCopies } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
+    const { remaining, heldGuestCopies, fileReferences } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
     const contactsLeft = await (deps.countContacts ?? (async (id: string) => (await companyContacts(id).list({ includeArchived: true })).length))(tenantId);
     if (contactsLeft > 0) remaining.shared_contacts = contactsLeft;
-    if (Object.keys(remaining).length > 0) throw new ErasureIncompleteError(remaining);
+    if (Object.keys(remaining).length > 0) throw new ErasureIncompleteError(remaining, fileReferences);
 
     const latestHold =
       heldGuestCopies > 0

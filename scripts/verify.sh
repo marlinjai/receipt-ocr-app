@@ -59,6 +59,8 @@ contact_tables_guard() {
 }
 
 # start_postgres <image> <user> <database>: prints the URL of a fresh container.
+# Always a new container with an empty database, never a kept one: the migrations are then applied
+# from the first as they are in the checkout, also one that was edited before it was ever merged.
 start_postgres() {
   local image="$1" user="$2" database="$3" id port
   id="$(docker run -d -e POSTGRES_USER="$user" -e POSTGRES_PASSWORD="$user" -e POSTGRES_DB="$database" -p 127.0.0.1::5432 "$image")" || return 1

@@ -10,6 +10,7 @@ import {
   ErasureChangedError,
   ErasureConflictError,
   ErasureIncompleteError,
+  ErasureTablesBusyError,
   StoredFileEraseError,
   UNSTAMPED_MODELS,
   classifyModels,
@@ -201,7 +202,7 @@ describe('eraseCompany against the real databases', () => {
       receipt_reviews: 3, receipt_item_readings: 3, receipt_assignment_decisions: 3, tax_accounts: 1, tax_import_batches: 1, tax_payments: 1, workspace_notes: 1, sheet_import_configs: 1,
     });
     expect(await leftOf(c)).toEqual(NOTHING);
-    expect(await countCompanyRemainder(db, c.tenantId, c.workspaceIds)).toEqual({ remaining: {}, heldGuestCopies: 1 });
+    expect(await countCompanyRemainder(db, c.tenantId, c.workspaceIds)).toEqual({ remaining: {}, heldGuestCopies: 1, fileReferences: [] });
     expect(await companyContacts(c.tenantId).list({ includeArchived: true })).toEqual([]);
 
     // No export covered the printed name, so it is held with a date and the answer says so.
@@ -479,6 +480,69 @@ describe('a file reference that lands after its table is gone', () => {
     expect(counts.register).toMatchObject({ tables: 2, receipts: 3, storedFiles: 4 });
     expect(await db.dtFile.count({ where: { fileId: late } })).toBe(0);
     expect(await leftOf(c)).toEqual(NOTHING);
+  });
+});
+
+describe('the file references are shared by every company', () => {
+  it('a writer that holds them longer than the run waits: the run stops as retryable without touching the table, and finishes once the writer is done', async () => {
+    const c = await company();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    // Another company's slow write: a transaction that attached a file and has not finished yet.
+    const other = await bystander();
+    const writer = db.$transaction(
+      async (tx) => {
+        await tx.dtFile.create({ data: { rowId: other.receipt.rowId, columnId: 'col', fileId: `file-${randomUUID()}`, fileUrl: '/api/files/x', originalName: 'beleg.jpg', mimeType: 'image/jpeg' } });
+        holding();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    await held;
+
+    const started = Date.now();
+    const d = deps();
+    const error = await eraseCompany(db, c.tenantId, c.workspaceIds, { ...d.all, tableLockWaitMs: 300 }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(ErasureTablesBusyError);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    // The stored files went (they need no lock), but no table was touched.
+    expect((error as { partial?: { register?: { tables: number; storedFiles: number } } }).partial?.register).toMatchObject({ tables: 0, storedFiles: 3 });
+    expect(await db.dtTable.count({ where: { id: { in: [c.first.tableId, c.second.tableId] } } })).toBe(2);
+
+    release();
+    await writer;
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all);
+    expect(counts.register).toMatchObject({ tables: 2, receipts: 3, storedFiles: 0 });
+    expect(await leftOf(c)).toEqual(NOTHING);
+  });
+
+  it('a reference that lands after the last look fails the run and is named, id and file, because no later run can find it', async () => {
+    const c = await company();
+    const late = `file-${randomUUID()}`;
+    const image = (await c.first.adapter.getColumns(c.first.tableId)).find((col) => col.name === 'Receipt Image')!;
+    let afterTables = 0;
+    let referenceId = '';
+    const error = await eraseCompany(db, c.tenantId, c.workspaceIds, {
+      ...deps().all,
+      checkpoint: async () => {
+        if ((await db.dtTable.count({ where: { id: { in: [c.first.tableId, c.second.tableId] } } })) > 0) return;
+        // The first step boundary after the tables is before the last look for late files, the second after it.
+        if (++afterTables !== 2) return;
+        referenceId = (await db.dtFile.create({ data: { rowId: c.receipts[0].rowId, columnId: image.id, fileId: late, fileUrl: `/api/files/${late}`, originalName: 'beleg.jpg', mimeType: 'image/jpeg' } })).id;
+      },
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(ErasureIncompleteError);
+    expect((error as ErasureIncompleteError).remaining).toEqual({ dt_files: 1 });
+    expect((error as ErasureIncompleteError).fileReferences).toEqual([{ referenceId, fileId: late }]);
+    // The next run does not see it: this is why the first one had to name it.
+    const next = await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all);
+    expect(next.register).toMatchObject({ tables: 0, storedFiles: 0 });
+    expect(await db.dtFile.count({ where: { id: referenceId } })).toBe(1);
+    await db.dtFile.delete({ where: { id: referenceId } });
   });
 });
 
@@ -793,6 +857,20 @@ describe('a signed delivery, with the real ledger', () => {
 
     await db.$executeRaw`UPDATE erasure_events SET lease_until = (now() AT TIME ZONE 'UTC') - interval '1 second' WHERE event_id = ${dead}`;
     expect((await deliver(c, eventId, c.workspaceIds, deps().all)).status).toBe(200);
+  });
+
+  it('a run whose completion cannot be recorded gives its lease back, so the next delivery is not turned away', async () => {
+    const c = await company();
+    const eventId = `evt-${randomUUID()}`;
+    const real = erasureLedger(db);
+    const broken = { ...real, complete: async () => { throw new Error('database gone'); } };
+
+    expect(await deliver(c, eventId, c.workspaceIds, deps().all, { ledger: broken })).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } });
+    expect(await db.erasureEvent.findUniqueOrThrow({ where: { eventId } })).toMatchObject({ leaseToken: null, leaseUntil: null });
+
+    // The retry is not answered 409: it finds nothing left and records the completion.
+    expect((await deliver(c, eventId, c.workspaceIds, deps().all)).status).toBe(200);
+    expect((await db.erasureEvent.findUniqueOrThrow({ where: { eventId } })).status).toBe('completed');
   });
 
   it('rows that remain answer 502 "rows_remain" with the table and count in the ledger', async () => {

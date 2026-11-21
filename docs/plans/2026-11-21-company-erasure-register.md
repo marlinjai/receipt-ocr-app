@@ -330,6 +330,7 @@ treated as not done.
 | A named workspace holds rows stamped with another company | 502 | `reason: rows_of_another_company`; nothing was erased; the ledger names the tables and the workspace ids |
 | Rows with the company's stamp lie in a workspace the delivery does not name | 502 | `reason: rows_outside_named_workspaces`; nothing was erased; the ledger names the tables and the workspace ids |
 | A file was attached to a receipt of the company while the run went on | 502 | `reason: changed_during_run`; the next run removes it |
+| A receipts table could not be locked within five seconds | 502 | `reason: tables_busy`; nothing of that table was touched |
 | The recount after the run still finds something of the company | 502 | `reason: rows_remain` |
 | The ledger cannot be written | 502 | `reason: ledger_unavailable` |
 | Any other failure | 502 | `reason: failed` |
@@ -373,12 +374,16 @@ open for the whole run, while the run's work needs further connections from the 
 Several erasures arriving together would each hold one and wait for another until the app has
 none left, and ordinary requests would fail with them. A lease costs no connection while it is held.
 
-A run renews its lease between its steps (before each batch of files, before each table, before
-each further step). A lease that is not renewed runs out after three minutes, so a run whose
+A run renews its lease between its steps (before the register is hashed, before the guest names
+are settled, before the contacts go, before and after the bank sessions are closed, before each
+batch of files, before each table, before each further step). A bank that does not answer is
+given ten seconds per session and then counted as "session left open". A lease that is not renewed runs out after three minutes, so a run whose
 process died does not block erasures for good. A run that finds its lease gone at a step
 boundary stops there (`lease_lost`) and records what it had removed; the next delivery goes on.
 Once everything is removed there is no further boundary: the run counts what is left and records
-its completion with its counts, also when the lease ran out in that last moment.
+its completion with its counts, also when the lease ran out in that last moment. When the
+record itself cannot be written, the run gives at least its lease back, so that other erasures
+are not turned away until it runs out.
 
 That a run continues after auth-brain has hung up is reasoned from how the server works, not
 measured with a large company; see the roadmap. The price of one at a time: when many companies
@@ -399,12 +404,15 @@ sent the delivery), so writes during a run are unlikely. They are still handled:
 - A writer that waited lands its reference after the table is gone. Before the recount the run
   therefore looks once more for references to the rows it removed, and removes those stored
   files and references too.
+- The lock on the file references waits five seconds at most (`tables_busy` past that, the run
+  is retried). That table is shared by every company: a run that waited without limit behind
+  one slow writer would make every later writer of every company wait behind it.
 - What remains open, accepted: a reference written after that last look, in the instant before
   the recount, is found by the recount and fails the run (`rows_remain`), but the repeat no
-  longer knows the row ids and would not find it again. It needs a write by a member of a
-  company that no longer has access, in a window of milliseconds, so it is documented here and
-  not built against. The stored file would be an upload without a receipt, which the answer
-  already names as something an erasure cannot assign.
+  longer knows the row ids and would not find it again. The failed run therefore names it in
+  the ledger (the reference's id and the stored file's id), and the operator page says how it
+  is removed by hand. It needs a write by a member of a company that no longer has access, in a
+  window of milliseconds, so nothing more is built against it.
 
 ## Four paths (stateful-flow standard)
 
@@ -540,6 +548,10 @@ migration `0053_erasure_events`, and the decision on the leftovers of 2026-11-21
   at a time in the whole app); a lost lease stops a run at its next step and a completion is
   always recorded with its counts; a conflict names the workspace ids; file references are
   locked during a table's removal and looked for once more afterwards.
+- 2026-11-21: a third look at the lease, 5 findings, all fixed: the lock on the file references
+  has a time limit, more lease checkpoints and a time limit on the bank, the lease is given back
+  when a run cannot be recorded, a left file reference is named in the ledger, and `AGENTS.md`
+  says when a kept test database has to be recreated.
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
   production (a decision of its own, nothing is deleted until the owner says yes;
   auth-brain will not send that delivery again by itself, because it was acknowledged);

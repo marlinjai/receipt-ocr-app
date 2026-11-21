@@ -130,6 +130,10 @@ export function erasureLedger(db: PrismaClient, options: { now?: () => Date; lea
       if (updated !== 1) throw new Error('erasure ledger: the event to complete is not recorded');
     },
 
+    async release(eventId, lease) {
+      await db.$executeRaw`UPDATE erasure_events SET lease_token = NULL, lease_until = NULL WHERE event_id = ${eventId} AND lease_token = ${lease.token}`;
+    },
+
     async fail(eventId, reason, detail, lease) {
       const at = now();
       const run = { at: at.toISOString(), outcome: 'failed', reason, ...(detail ? { detail } : {}) };

@@ -18,6 +18,10 @@ migrations produce with `prisma/schema.prisma`, the database tests, and the road
 - The database stages need two throwaway Postgres databases. Without
   `TEST_DATABASE_URL` and `CONTACTS_TEST_DATABASE_URL` the command starts two Docker containers
   on free local ports and removes them at the end. With both set it uses those.
+- The containers it starts are new on every run, so they always carry the migrations as they are in
+  the checkout. A test database you keep yourself does not: a migration that was edited after you
+  applied it (allowed only while it has never been merged) is not applied again, and the stage
+  "migrations produce the schema" fails. Drop and recreate that database then.
 - Before the migrations are applied, a stage of its own (`pnpm check:databases`) refuses every
   database URL of the run that is not local with a name ending in `_test`. The database tests
   check the same again for themselves (`test/db-guard.ts`).

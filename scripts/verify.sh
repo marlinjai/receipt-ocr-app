@@ -50,7 +50,8 @@ skip() {
 # The contact tables are opened only through @marlinjai/contacts-core, which keeps
 # every query scoped to one company. Raw SQL that names them would bypass that.
 contact_tables_guard() {
-  if git grep -nIE '(FROM|INTO|UPDATE|JOIN|TABLE)[[:space:]]+"?(contacts|contact_affiliations|tenant_counters)"?([^[:alnum:]_]|$)' -- src scripts test ':!scripts/verify.sh'; then
+  # Plain grep, not git grep: the command also runs on a copy of the worktree without its .git folder.
+  if grep -rnIE --exclude=verify.sh '(FROM|INTO|UPDATE|JOIN|TABLE)[[:space:]]+"?(contacts|contact_affiliations|tenant_counters)"?([^[:alnum:]_]|$)' src scripts test; then
     echo "Raw SQL on the shared contact tables found. Go through @marlinjai/contacts-core instead."
     return 1
   fi

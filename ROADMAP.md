@@ -372,6 +372,15 @@
   nothing. Also missing in auth-brain, needed after a database recovery: its Erasures page cannot
   send an acknowledged delivery again, and its note on what Receipts erases (`suite-apps.ts`)
   still describes contact data only. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+- [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
+  behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
+  row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,
+  and removes the `dt_files` references without deleting the stored objects in Storage Brain, which
+  nothing can find afterwards. The company erasure does not use it for that reason (decision 11 of
+  the plan), but every ordinary table delete in Receipts inherits it. Fix in the data-table
+  repository (errors surface, one transaction, the file ids handed to the caller before the
+  references go), then check which paths in Receipts delete a table and let them remove the stored
+  files first. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 
 <!-- Decided features, ready to be worked on -->
 

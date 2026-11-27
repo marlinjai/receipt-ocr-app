@@ -3,6 +3,7 @@
 import { observer } from 'mobx-react-lite';
 import { useId, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
+import LazyDetails from '@/components/ui/LazyDetails';
 import { useAppStore } from '@/stores/provider';
 import { useRouter } from 'next/navigation';
 import { formatDay } from '@/lib/meals/messages';
@@ -66,6 +67,9 @@ const OWN_ACCOUNT = 'own_account';
  * list does not save (arrow keys on a closed list change the value in some
  * browsers), the button does. An error shows in the row it belongs to.
  */
+/** Rows of "Unklar" built at first, and added per press of "Weitere zeigen". */
+export const UNCLEAR_PAGE = 50;
+
 function UnclearRow({
   entry,
   canWrite,
@@ -173,6 +177,8 @@ export default function SpendingClient({
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
+  // How many rows of "Unklar" are built; the rest waits behind a button (a year had 345 rows, 6,600 elements).
+  const [unclearShown, setUnclearShown] = useState(UNCLEAR_PAGE);
   // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
   // The page reads the overview afresh after a change in the checks below (a receipt linked by hand): take that
@@ -451,7 +457,7 @@ export default function SpendingClient({
                   {!view.canWrite && ' Zum Zuordnen fehlt in diesem Arbeitsbereich die Berechtigung.'}
                 </p>
                 <ul data-feedback-mask className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
-                  {overview.unclear.map((u) => (
+                  {overview.unclear.slice(0, unclearShown).map((u) => (
                     <UnclearRow
                       key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`}
                       entry={u}
@@ -462,6 +468,11 @@ export default function SpendingClient({
                     />
                   ))}
                 </ul>
+                {overview.unclear.length > unclearShown && (
+                  <button type="button" className="ui-btn ui-btn-sm mt-2" onClick={() => setUnclearShown((n) => n + UNCLEAR_PAGE)}>
+                    Weitere {Math.min(UNCLEAR_PAGE, overview.unclear.length - unclearShown)} von {overview.unclear.length - unclearShown} zeigen
+                  </button>
+                )}
                 <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
                   Eine Abbuchung, die nur eine eigene Kreditkarte oder ein eigenes Konto ausgleicht, ist keine Ausgabe: dafür „Eigenes Konto“
                   wählen. Das gilt dann auch unter{' '}
@@ -597,10 +608,12 @@ export default function SpendingClient({
             </details>
           )}
 
-          <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
-            <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-              Zahlungen {period} ({overview.payments.length})
-            </summary>
+          <LazyDetails
+            className="glass-panel ui-disclosure mt-4 rounded-xl p-4"
+            summaryClassName="cursor-pointer text-sm font-semibold"
+            summaryStyle={{ color: 'var(--foreground)' }}
+            summary={`Zahlungen ${period} (${overview.payments.length})`}
+          >
             <div className="ui-scroll mt-3 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <caption className="sr-only">Zahlungen {period} mit Kategorie, Zweck und Beleg</caption>
@@ -663,7 +676,7 @@ export default function SpendingClient({
                 </tbody>
               </table>
             </div>
-          </details>
+          </LazyDetails>
         </div>
       )}
     </main>

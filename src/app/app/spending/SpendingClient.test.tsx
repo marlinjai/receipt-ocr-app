@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { buildOverview } from '@/lib/spending/overview';
 import { AppStore } from '@/stores/AppStore';
@@ -36,6 +36,16 @@ import type { BudgetLine } from '@/lib/spending/budgets';
 import type { SpendingPageView } from './actions';
 
 afterEach(cleanup);
+
+/** Opens the closed table of the period's payments, whose rows are built only then (`LazyDetails`). */
+const openPayments = () => {
+  const details = screen.getByText(/^Zahlungen \d{4}/).closest('details')!;
+  act(() => {
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+  });
+  return details;
+};
 
 const pay = { id: 'p1', accountId: 'a1', bookingDay: '2026-04-03', amountCents: -3000, counterparty: 'Zyx Handel', counterpartyKey: 'zyx handel', reference: '', kind: 'spend' as const, linkCount: 0 };
 const view = (canWrite: boolean): SpendingPageView => ({
@@ -128,6 +138,7 @@ describe('SpendingClient with payments of another company', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<SpendingClient today="2026-04-15" initial={shared(true)} />);
     expect(screen.getByText(/Girokonto \(private Zahlungen, geführt von Beispiel Firma\)/)).toBeTruthy();
+    openPayments();
     // Only the routed payment with a receipt offers it; the own payment without one does not.
     const buttons = screen.getAllByRole('button', { name: /^Lösen: / });
     expect(buttons).toHaveLength(1);
@@ -143,11 +154,13 @@ describe('SpendingClient with payments of another company', () => {
     unlinkRoutedReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { unmount } = render(<SpendingClient today="2026-04-15" initial={shared(true)} />);
+    openPayments();
     await userEvent.setup().click(screen.getByRole('button', { name: /^Lösen: / }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/kein Beleg mehr/);
     confirm.mockRestore();
     unmount();
     render(<SpendingClient today="2026-04-15" initial={shared(false)} />);
+    openPayments();
     expect(screen.queryByRole('button', { name: /^Lösen: / })).toBeNull();
   });
 
@@ -285,6 +298,7 @@ describe('SpendingClient waiting collections', () => {
     render(<SpendingClient today="2026-10-24" initial={{ ...view(true), overview: buildOverview([pay, waiting], { treatments: new Map(), answers: new Map() }, 2026, null) }} />);
     expect(screen.getByText(/Nicht mitgezählt: 1 Klarna-Sammelzahlung über 1\.261,69 € wartet auf die nächste Klarna-Liste\./)).toBeTruthy();
     // The payments table says it waits, not merely "Umbuchung".
+    openPayments();
     expect(screen.getByText('Sammelzahlung, wartet auf die nächste Klarna-Liste')).toBeTruthy();
   });
 });
@@ -397,5 +411,32 @@ describe('the count on the "Belege" tab', () => {
   it('shows nothing when the page could not read them', () => {
     render(<SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={null} checks={<p>Belegliste</p>} />);
     expect(screen.getByRole('tab', { name: /Belege/ }).querySelector('span')).toBeNull();
+  });
+});
+
+describe('a period with many payments', () => {
+  const many = (n: number): SpendingPageView => {
+    const payments = Array.from({ length: n }, (_, i) => ({ ...pay, id: `p${i}`, counterparty: `Gegenseite ${i}`, counterpartyKey: `gegenseite ${i}` }));
+    return { ...view(true), overview: buildOverview(payments, { treatments: new Map(), answers: new Map() }, 2026, null) };
+  };
+  // Counted by attribute: asking for 120 accessible names takes jsdom half a minute.
+  const unclearRows = () => document.querySelectorAll('button[aria-label^="Kategorie für Gegenseite "]');
+
+  it('builds the closed payments table only once it is opened', () => {
+    render(<SpendingClient today="2026-04-15" initial={many(120)} />);
+    const table = () => screen.getByText('Zahlungen 2026 (120)').closest('details')!.querySelectorAll('tbody tr');
+    expect(table()).toHaveLength(0);
+    openPayments();
+    expect(table()).toHaveLength(120);
+  });
+
+  it('shows the first rows of "Unklar" and more on each press, until all are there', () => {
+    render(<SpendingClient today="2026-04-15" initial={many(120)} />);
+    expect(unclearRows()).toHaveLength(50);
+    fireEvent.click(screen.getByRole('button', { name: 'Weitere 50 von 70 zeigen' }));
+    expect(unclearRows()).toHaveLength(100);
+    fireEvent.click(screen.getByRole('button', { name: 'Weitere 20 von 20 zeigen' }));
+    expect(unclearRows()).toHaveLength(120);
+    expect(screen.queryByRole('button', { name: /^Weitere/ })).toBeNull();
   });
 });

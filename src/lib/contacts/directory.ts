@@ -442,6 +442,11 @@ export async function archiveDirectoryField(contacts: Contacts, key: string): Pr
   return presentField(await call(() => contacts.archiveField(key)));
 }
 
+/** Bring an archived custom field back: it takes new values again. Repeatable. */
+export async function restoreDirectoryField(contacts: Contacts, key: string): Promise<DirectoryField> {
+  return presentField(await call(() => contacts.restoreField(key)));
+}
+
 /** How many organizations the directory lists (archived ones are left out, as in the list). */
 export async function countDirectoryOrganizations(contacts: Contacts): Promise<number> {
   return (await contacts.list({ kind: 'organization' })).length;

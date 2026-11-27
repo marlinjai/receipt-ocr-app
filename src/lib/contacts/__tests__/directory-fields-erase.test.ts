@@ -20,6 +20,7 @@ import {
   listDirectory,
   listDirectoryFields,
   previewEraseContact,
+  restoreDirectoryField,
   updateDirectoryContact,
 } from '../directory';
 import { eraseConfirmation } from '../directory-messages';
@@ -123,6 +124,12 @@ function fakeContacts(initial: SharedContact[], tenantId = TENANT) {
       if (defs.some((d) => d.key === data.key)) throw new SharedError('duplicate_field', { field: data.key });
       const def: FieldDefinition = { ...data, archived: false, createdAt: new Date(0) };
       defs.push(def);
+      return { ...def };
+    }),
+    restoreField: vi.fn(async (key: string) => {
+      const def = defs.find((d) => d.key === key);
+      if (!def) throw new SharedError('field_not_found', { field: key });
+      def.archived = false;
       return { ...def };
     }),
     archiveField: vi.fn(async (key: string) => {
@@ -230,6 +237,8 @@ describe('define field: custom fields per company', () => {
     await expect(archiveDirectoryField(C(c), 'diet')).resolves.toMatchObject({ archived: true });
     await expect(createDirectoryField(C(c), { key: 'diet', label: 'Neu', type: 'text' })).rejects.toMatchObject({ code: 'duplicate_field' });
     await expect(archiveDirectoryField(C(c), 'missing')).rejects.toMatchObject({ code: 'field_not_found' });
+    await expect(restoreDirectoryField(C(c), 'diet')).resolves.toMatchObject({ archived: false });
+    await expect(restoreDirectoryField(C(c), 'missing')).rejects.toMatchObject({ code: 'field_not_found' });
   });
 
   it('refuses a select field without options and an unknown type', async () => {

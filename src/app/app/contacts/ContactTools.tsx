@@ -27,6 +27,7 @@ interface ContactToolsProps {
   /** Resolves to true when the field was created, so the inputs can be cleared. */
   onCreateField: (input: NewFieldInput) => Promise<boolean>;
   onArchiveField: (key: string) => void;
+  onRestoreField: (key: string) => void;
 }
 
 export default function ContactTools(props: ContactToolsProps) {
@@ -151,7 +152,7 @@ export default function ContactTools(props: ContactToolsProps) {
           Eigene Felder
         </h2>
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
-          Zusätzliche Angaben, die bei jedem Kontakt dieses Kontos erfasst werden können. Ein archiviertes Feld behält seine gespeicherten Werte, nimmt aber keine neuen an.
+          Zusätzliche Angaben, die bei jedem Kontakt dieses Kontos erfasst werden können. Ein archiviertes Feld behält seine gespeicherten Werte, nimmt aber keine neuen an. Es lässt sich wiederherstellen.
         </p>
         {fields.length > 0 && (
           <ul className="space-y-1">
@@ -165,7 +166,11 @@ export default function ContactTools(props: ContactToolsProps) {
                     {f.archived ? ' (archiviert)' : ''}
                   </span>
                 </span>
-                {!f.archived && (
+                {f.archived ? (
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={!idle} aria-label={`Feld ${f.label} wiederherstellen`} onClick={() => props.onRestoreField(f.key)}>
+                    Wiederherstellen
+                  </button>
+                ) : (
                   <button type="button" className="ui-btn ui-btn-sm" disabled={!idle} aria-label={`Feld ${f.label} archivieren`} onClick={() => props.onArchiveField(f.key)}>
                     Archivieren
                   </button>

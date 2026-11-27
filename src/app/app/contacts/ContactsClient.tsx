@@ -10,6 +10,7 @@ import { mealActionMessage } from '@/lib/meals/messages';
 import { setContactArchived, updateContact } from '../meals/actions';
 import {
   archiveFieldAction,
+  restoreFieldAction,
   assignCustomerNumberAction,
   createDirectoryAction,
   createFieldAction,
@@ -601,6 +602,7 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
               onMerge={merge}
               onCreateField={createField}
               onArchiveField={(key) => void act(`field-${key}`, () => archiveFieldAction(key), 'Feld archiviert.')}
+              onRestoreField={(key) => void act(`field-${key}`, () => restoreFieldAction(key), 'Feld wiederhergestellt.')}
             />
           )}
 

@@ -53,6 +53,7 @@ const actions = {
   exportDirectoryAction: vi.fn(),
   createFieldAction: vi.fn(),
   archiveFieldAction: vi.fn(),
+  restoreFieldAction: vi.fn(),
   previewEraseAction: vi.fn(),
   eraseDirectoryAction: vi.fn(),
 };
@@ -72,6 +73,7 @@ vi.mock('./actions', () => ({
   exportDirectoryAction: (...a: unknown[]) => actions.exportDirectoryAction(...a),
   createFieldAction: (...a: unknown[]) => actions.createFieldAction(...a),
   archiveFieldAction: (...a: unknown[]) => actions.archiveFieldAction(...a),
+  restoreFieldAction: (...a: unknown[]) => actions.restoreFieldAction(...a),
   previewEraseAction: (...a: unknown[]) => actions.previewEraseAction(...a),
   eraseDirectoryAction: (...a: unknown[]) => actions.eraseDirectoryAction(...a),
 }));
@@ -1067,5 +1069,19 @@ describe('contacts page: the rare tools are out of the main flow', () => {
     expect(await screen.findByText('Feld archiviert.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Feld Plätze archivieren' })).toBeNull();
     expect(screen.getByText(/\(archiviert\)/)).toBeTruthy();
+  });
+
+  it('restores an archived field', async () => {
+    server.fields = server.fields.map((f) => (f.key === 'seats' ? { ...f, archived: true } : f));
+    actions.restoreFieldAction.mockImplementation(async (key: string) => {
+      server.fields = server.fields.map((f) => (f.key === key ? { ...f, archived: false } : f));
+      return { ok: true, value: server.fields[0] };
+    });
+    const user = renderPage();
+    await user.click(screen.getByRole('tab', { name: 'Verwaltung' }));
+    await user.click(screen.getByRole('button', { name: 'Feld Plätze wiederherstellen' }));
+    await waitFor(() => expect(actions.restoreFieldAction).toHaveBeenCalledWith('seats'));
+    expect(await screen.findByText('Feld wiederhergestellt.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Feld Plätze archivieren' })).toBeTruthy();
   });
 });

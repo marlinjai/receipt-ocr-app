@@ -15,27 +15,34 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Receipt OCR - Extract Text from Receipts",
-  description: "Upload receipts and invoices to extract text using AI-powered OCR. Built with Storage Brain.",
+  // A page names itself with its own `metadata.title`; the template adds the app.
+  title: { default: "Lumitra Receipts", template: "%s · Lumitra Receipts" },
+  description: "Belege fotografieren, zuordnen und mit den Zahlungen abgleichen.",
+  applicationName: "Lumitra Receipts",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Receipt OCR",
+    title: "Receipts",
   },
   formatDetection: {
     telephone: false,
   },
+  // iOS takes no SVG for the home screen icon: without a PNG it shows a screenshot of the page instead.
   icons: {
-    icon: "/icons/icon-192.svg",
-    apple: "/icons/icon-192.svg",
+    icon: [
+      { url: "/icons/icon-512.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon-180.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximum scale: a page that cannot be zoomed fails people who need larger text (WCAG 1.4.4).
+  // On touch screens every field is at least 16 px (globals.css), so iOS does not zoom into it by itself.
   themeColor: "#e2a348",
 };
 
@@ -45,7 +52,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="de">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >

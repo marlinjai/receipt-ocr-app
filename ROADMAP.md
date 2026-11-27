@@ -637,6 +637,7 @@
 
 <!-- Currently being implemented -->
 
+- [ ] Next.js 16.4.3 to 16.4.6: seven npm security advisories against next <=16.4.4 (published 16 to 19 Nov) are fixed in 16.4.5, and 16.4.3 fails `next build` with SecurityFatalError when an AI agent runs the build. Bump only next and eslint-config-next, keeping the pin style (caret for next, exact for eslint-config-next). (2026-11-27)
 - [ ] Who bears a receipt is decided by a model that learns the person (decided by the owner on
   2026-11-07): the person's statements, their earlier answers per vendor and the corrections of the
   model's own answers are its context; a confident answer (0.9 or more, Sonnet 5.5, chosen by the
@@ -655,7 +656,7 @@
   2026): run scripts/klarna/klarna-web-export.js and klarna-to-csv.py (see
   [docs/operations/klarna-export.md](docs/operations/klarna-export.md)), import the file under
   Finanzen, Zahlungen, Klarna. Nothing to switch off afterwards: a Klarna debit more than 60 days
-  after the list's last day is a question again by itself (plan decision 2). (2026-10-23)
+  after the list's last day is a question again by itself (plan decision 2). (2026-11-27)
 - [x] Shared contact list, wave 2: the business-meal guests moved to the suite's shared
   contacts database (company-scoped, behind the `CONTACTS_STORE=shared` switch, default
   off), with a merge-aware data move that Marlin reviews before anything is dropped. Done

@@ -27,9 +27,15 @@ export class AppStore {
   /** The refusals of finance writes answered after the finance page closed. */
   readonly financeOutbox = new FinanceOutbox();
   private fromServer: NavCounts | null = null;
+  /**
+   * When the numbers were last known to be right: an answer of the server, or a page whose
+   * store counted them handing them over as it closed. 0 until then. Not observed: it only
+   * decides whether the next page asks again (`AppStoreProvider`).
+   */
+  countsKnownAt = 0;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -41,8 +47,9 @@ export class AppStore {
     };
   }
 
-  serverCounts(counts: NavCounts): void {
+  serverCounts(counts: NavCounts, now: number = Date.now()): void {
     this.fromServer = counts;
+    this.countsKnownAt = now;
   }
 
   /** The domain's page opened. The return is for when it closes: its last number stays until the server says otherwise. */
@@ -55,6 +62,7 @@ export class AppStore {
 
   private closeMeals(meals: MealsStore): void {
     if (this.meals !== meals) return;
+    // The meal number is the store's own; the review number is whatever was known, so it does not make the pair fresh.
     this.fromServer = { review: this.counts?.review ?? 0, meals: meals.queue.length };
     this.meals = null;
     this.mealOutbox.open = null;
@@ -108,6 +116,8 @@ export class AppStore {
   private closeReceipts(receipts: ReceiptsStore): void {
     if (this.receipts !== receipts) return;
     this.fromServer = this.counts;
+    // The dashboard's store counted both numbers itself.
+    if (this.fromServer) this.countsKnownAt = Date.now();
     this.receipts = null;
   }
 }

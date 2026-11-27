@@ -637,7 +637,7 @@
 
 <!-- Currently being implemented -->
 
-- [ ] Next.js 16.4.3 to 16.4.6: seven npm security advisories against next <=16.4.4 (published 16 to 19 Nov) are fixed in 16.4.5, and 16.4.3 fails `next build` with SecurityFatalError when an AI agent runs the build. Bump only next and eslint-config-next, keeping the pin style (caret for next, exact for eslint-config-next). (2026-11-27)
+- [x] Next.js 16.4.3 to 16.4.6: seven npm security advisories against next <=16.4.4 (published 16 to 19 Nov) are fixed in 16.4.5, and 16.4.3 fails `next build` with SecurityFatalError when an AI agent runs the build. Bump only next and eslint-config-next, keeping the pin style (caret for next, exact for eslint-config-next). Merged 2026-11-27 in PR #259 (commit 71458f3); Build & Deploy and verify succeeded; receipts.lumitra.co answers 307 as before. Done 2026-11-27.
 - [ ] Who bears a receipt is decided by a model that learns the person (decided by the owner on
   2026-11-07): the person's statements, their earlier answers per vendor and the corrections of the
   model's own answers are its context; a confident answer (0.9 or more, Sonnet 5.5, chosen by the

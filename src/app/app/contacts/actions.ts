@@ -9,6 +9,7 @@ import {
   DirectoryError,
   addDirectoryAffiliation,
   archiveDirectoryField,
+  restoreDirectoryField,
   endDirectoryAffiliation,
   listDirectoryAffiliations,
   removeDirectoryAffiliation,
@@ -259,6 +260,14 @@ export async function createFieldAction(input: {
 export async function archiveFieldAction(key: string): Promise<DirectoryResult<DirectoryField>> {
   try {
     return { ok: true, value: await archiveDirectoryField(await writeContacts(), String(key)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function restoreFieldAction(key: string): Promise<DirectoryResult<DirectoryField>> {
+  try {
+    return { ok: true, value: await restoreDirectoryField(await writeContacts(), String(key)) };
   } catch (e) {
     return failure(e);
   }

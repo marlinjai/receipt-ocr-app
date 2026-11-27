@@ -212,8 +212,10 @@ production effect is measured after a deploy Marlin approves.
   over its meal number, which alone does not make the pair fresh. A
   failed answer makes the next page ask again, an answer that arrives after the next click still
   shows unless the receipts page handed over newer numbers in between, a receipt saved or discarded
-  on the upload page has the next page ask (`countsChanged`), and a meal write that ends on another
-  page still asks at once.
+  on the upload page has the next page ask (`countsChanged`), also when it happens while an ask is
+  on its way or when that ask fails, and a meal write that ends on another page still asks at once.
+  Changes and hand-overs are ordered by counters, not by the clock, so two events in the same
+  millisecond cannot be mistaken for each other (found by the hermes test run and the review).
 - **`LazyDetails`** (`src/components/ui/LazyDetails.tsx`): a disclosure whose content is built on
   the first open and kept after it. Used for the spending page's payments table.
 

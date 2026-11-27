@@ -33,11 +33,17 @@ export class AppStore {
    * decides whether the next page asks again (`AppStoreProvider`).
    */
   countsKnownAt = 0;
-  /** When something on a page without a store of its own may have changed the numbers (a receipt uploaded or discarded). 0 until then. */
-  countsChangedAt = 0;
+  /**
+   * How often a page without a store of its own may have changed the numbers (a receipt uploaded
+   * or discarded), and how many of those changes the last ask or hand-over already covers. A
+   * count, not a time: a change and an ask in the same millisecond must not be told apart by
+   * the clock. Not observed, like `countsKnownAt`.
+   */
+  countsChanges = 0;
+  countsChangesCovered = 0;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChangedAt: false, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChanges: false, countsChangesCovered: false, countsChangedSince: false, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -50,8 +56,18 @@ export class AppStore {
   }
 
   /** The next page asks the server again, however fresh the numbers were. */
-  countsChanged(now: number = Date.now()): void {
-    this.countsChangedAt = now;
+  countsChanged(): void {
+    this.countsChanges += 1;
+  }
+
+  /** Whether a change happened that neither an ask nor a hand-over has covered yet. */
+  get countsChangedSince(): boolean {
+    return this.countsChanges !== this.countsChangesCovered;
+  }
+
+  /** An ask for the numbers starts: every change made until now is in its answer. */
+  countsAsked(): void {
+    this.countsChangesCovered = this.countsChanges;
   }
 
   serverCounts(counts: NavCounts, now: number = Date.now()): void {
@@ -124,7 +140,10 @@ export class AppStore {
     if (this.receipts !== receipts) return;
     this.fromServer = this.counts;
     // The dashboard's store counted both numbers itself.
-    if (this.fromServer) this.countsKnownAt = Date.now();
+    if (this.fromServer) {
+      this.countsKnownAt = Date.now();
+      this.countsChangesCovered = this.countsChanges;
+    }
     this.receipts = null;
   }
 }

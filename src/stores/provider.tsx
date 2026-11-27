@@ -63,6 +63,7 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
       const mine = ++asked.current;
       const startedAt = Date.now();
       askedAt.current = startedAt;
+      store.countsAsked();
       getNavCounts()
         .then((result) => {
           if (mine !== asked.current) return;
@@ -77,7 +78,7 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
     };
     const known = Math.max(askedAt.current, store.countsKnownAt);
     // Stale by age, or because a page without a store of its own changed them since (an upload).
-    if (pathname !== DASHBOARD && (Date.now() - known >= NAV_COUNTS_FRESH_MS || store.countsChangedAt >= known)) ask();
+    if (pathname !== DASHBOARD && (Date.now() - known >= NAV_COUNTS_FRESH_MS || store.countsChangedSince)) ask();
     // A list action of the meals page that ends after the page closed: the number left behind took it for done.
     // On the dashboard the number on screen is its store's, so that is the one to ask.
     const stop = reaction(

@@ -300,5 +300,18 @@ describe('the numbers of the navigation when the page changes', () => {
     await page.go('/app/rules');
     expect(getNavCounts).toHaveBeenCalledTimes(2);
   });
-});
 
+  it('a receipt saved while an ask is still on its way has the next page ask again, in the same millisecond too', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-27T10:00:00Z'));
+    let answer: (value: unknown) => void = () => {};
+    getNavCounts.mockImplementation(() => new Promise((resolve) => (answer = resolve)) as never);
+    const page = onPage('/app/spending');
+    expect(getNavCounts).toHaveBeenCalledTimes(1);
+    await page.go('/app');
+    page.app().countsChanged();
+    await act(async () => answer({ ok: true, value: { review: 1, meals: 0 } }));
+    await page.go('/app/finance');
+    expect(getNavCounts).toHaveBeenCalledTimes(2);
+  });
+});

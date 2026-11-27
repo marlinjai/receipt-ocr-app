@@ -266,4 +266,39 @@ describe('the numbers of the navigation when the page changes', () => {
     expect(getNavCounts).not.toHaveBeenCalled();
     expect(page.app().counts).toEqual({ review: 5, meals: 9 });
   });
+
+  it('an answer asked before the receipts page handed over its numbers does not overwrite them', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-27T10:00:00Z'));
+    let answer: (value: unknown) => void = () => {};
+    getNavCounts.mockImplementation(() => new Promise((resolve) => (answer = resolve)) as never);
+    const page = onPage('/app/spending');
+    expect(getNavCounts).toHaveBeenCalledTimes(1);
+    await page.go('/app/dashboard');
+    vi.setSystemTime(new Date(Date.now() + 1000));
+    const close = page.app().openReceipts({ reviewCount: 2, openMeals: 3 } as unknown as ReceiptsStore);
+    close();
+    await page.go('/app/finance');
+    await act(async () => answer({ ok: true, value: { review: 6, meals: 3 } }));
+    expect(page.app().counts).toEqual({ review: 2, meals: 3 });
+  });
+
+  it('a receipt saved on the upload page has the next page ask, however fresh the numbers were', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-27T10:00:00Z'));
+    getNavCounts.mockImplementation(async () => ({ ok: true, value: { review: 1, meals: 0 } }) as never);
+    const page = onPage('/app/spending');
+    await act(async () => {});
+    await page.go('/app');
+    expect(getNavCounts).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date(Date.now() + 2000));
+    page.app().countsChanged();
+    await page.go('/app/finance');
+    expect(getNavCounts).toHaveBeenCalledTimes(2);
+    // And only once: the answer makes them fresh again.
+    vi.setSystemTime(new Date(Date.now() + 2000));
+    await page.go('/app/rules');
+    expect(getNavCounts).toHaveBeenCalledTimes(2);
+  });
 });
+

@@ -1336,16 +1336,3 @@ textarea.ui-input {
     display: none;
   }
 }
-
-/*
-  Pinch zoom is allowed (no maximum-scale in the viewport, WCAG 1.4.4). iOS zooms into a focused field
-  whose text is smaller than 16 px and stays zoomed; on a touch screen every field is therefore at least
-  16 px, also the small ones of the data table and the selects. Plan: docs/plans/2026-11-26-receipts-perf-pwa-ux-review.md.
-*/
-@media (pointer: coarse) {
-  input:not([type='checkbox']):not([type='radio']):not([type='range']),
-  select,
-  textarea {
-    font-size: max(16px, 1em);
-  }
-}

@@ -1,6 +1,6 @@
 ---
 title: Receipts review - load time, installed app and navigation
-summary: A measured review of why the receipts app feels slow, how far it is a real installed app, and where navigation hurts. Four passes on production (headless browser, frontend code, server timing logs, the PWA state). The slowness has three main causes, each measured, the largest being that every page reads every payment of the company on the server (0.6 to 1.75 s, more than after the October fix) and that the sidebar's two numbers re-ran the dashboard's review list on every click. Fixed on a local branch, not deployed - the sidebar numbers, the spending page's 20,000 hidden table elements, and the manifest and icons. What remains is ordered by value.
+summary: A measured review of why the receipts app feels slow, how far it is a real installed app, and where navigation hurts. Four passes on production (headless browser, frontend code, server timing logs, the PWA state). The slowness has three main causes, each measured, the largest being that every page reads every payment of the company on the server (0.6 to 1.75 s in the log; the dashboard is slower than after the October fix) and that the sidebar's two numbers re-ran the dashboard's review list on every click. Fixed on a local branch, not deployed - the sidebar numbers, the spending page's 20,000 hidden table elements, and the manifest and icons. What remains is ordered by value.
 type: plan
 status: draft
 tags: [receipts, review, performance, pwa, navigation, ux]
@@ -32,17 +32,22 @@ receipts):**
    (`Page.getInstallabilityErrors`, `Page.getAppManifest`), icons, metadata.
 
 Caveats on the numbers. The Mac ran at a load average of 190 to 250 during part of the session, and
-the automation profile carries a password manager extension (a 457 KB script in every page). Frame
-rates of the second batch (26 to 45 per second on light pages) are therefore not reported as
-findings; the first batch (50 to 60 per second) and every server-side figure are unaffected. A
+the automation profile carries a password manager extension (a 457 KB script in every page, which
+inflates the browser's script time on every page alike). The second batch (contacts, tools, rules,
+import, and the warm runs of finance, spending and meals) ran under that load: its frame rates (26 to
+45 per second on light pages) are not reported, and its load and blocking figures are marked as
+such in the table. The first batch (upload, receipts, overview, and the cold runs of finance,
+spending and meals) and every server-side figure come from the server's own log or ran before the
+load rose. A
 phone run with a throttled processor was not done (see "Not measured").
 
 ## The short version
 
-- **The server is the bottleneck, not the browser.** Every page waits for one full read of every
+- **On a desktop processor the server is the bottleneck, not the browser** (a phone run is still open). Every page waits for one full read of every
   payment of the company (`payments.read`, 585 to 1,752 ms in today's log), and the dashboard then
-  builds the review list and the meal register on top. The dashboard took 1.0 to 1.1 s on the server
-  after the October fix (`2026-10-26-fast-dashboard-and-spending.md`); today it is 1.7 to 3.6 s.
+  builds the review list and the meal register on top. Warm against warm, the dashboard took 1.0 to
+  1.1 s on the server after the October fix (`2026-10-26-fast-dashboard-and-spending.md`) and takes
+  1.7 to 1.9 s today; the 3.3 and 3.6 s lines came right after a deploy, which pays a one-off read.
 - **Every click in the sidebar paid for the dashboard's work again.** The two numbers in the sidebar
   ("Belege 5", "Bewirtung 9") were recounted on every page change through a server action that runs
   the review list and the meal register: 1.2 to 3 s of server work per click, and as a server action
@@ -50,9 +55,10 @@ phone run with a throttled processor was not done (see "Not measured").
 - **The spending page builds 28,435 elements, 20,401 of them in a closed table.** It sends 3.4 MB of
   HTML and blocks the main thread for 0.27 to 0.5 s. **Fixed in part** (the closed table and the
   long "Unklar" list); the 1.8 MB of serialized data remain.
-- **The app is installable and its service worker works,** but the manifest still says "Receipt OCR",
-  has SVG icons only (iOS shows a screenshot as the home screen icon), and the page blocks pinch
-  zoom and declares English for German pages. **Fixed.**
+- **The app is installable and its service worker is registered,** but the manifest still said
+  "Receipt OCR", had SVG icons only (iOS shows a screenshot as the home screen icon), and the pages
+  declared English while written in German. **Fixed.** The page also blocks pinch zoom; that change
+  waits for proof on phone screenshots.
 - **Navigation:** a sidebar click shows "Wird geladen…" for as long as the server needs: 1.2 s to
   the overview, 1.7 s to the receipts, 3.4 s to finance, 4.1 s to spending. Nothing is kept
   between visits, because every page is rendered per request and the router keeps no copy. That is
@@ -71,7 +77,7 @@ one exists (pages under 700 ms write none).
 | Finance | 3.80 s | 3.83 s | 1,261 KB | 356 | 33 to 43 ms | not logged (no measurement around it) |
 | Spending | 3.50 s | 3.68 s | 3,398 KB | 28,435 | 273 to 502 ms | 2.0 to 3.1 s |
 | Meals | 1.60 s | 1.61 s | 90 KB | 512 | 20 ms | under 0.7 s |
-| Contacts, rules, tools, import | 0.34 to 1.17 s | 0.38 to 1.19 s | 27 to 71 KB | 227 to 526 | 31 to 367 ms | under 0.7 s |
+| Contacts, rules, tools, import (under load, see caveats) | 0.34 to 1.17 s | 0.38 to 1.19 s | 27 to 71 KB | 227 to 526 | 31 to 367 ms | under 0.7 s |
 
 Every page: 10 to 13 script files, 553 to 1,076 KB of script (176 to 327 KB on the wire), 81 KB of
 CSS, all with `cache-control: public, max-age=31536000, immutable` and gzip. Documents are gzip as
@@ -88,7 +94,9 @@ Soft navigation, a click in the sidebar until "Wird geladen…" is gone (desktop
 | Overview | 1.18 s |
 | Meals | 1.29 s |
 | Rules, tools | 0.36 s |
-| Contacts | 0.06 s |
+
+Contacts is left out: it has a loading file of its own, so the wait condition held at once (209
+elements at that moment, 526 when loaded); a figure for it needs another condition.
 
 Server steps from the production log (today, after the 13:05 deploy; the first lines after a deploy
 include the one-off reading of every receipt):
@@ -109,10 +117,13 @@ include the one-off reading of every receipt):
 - **S1. Every page reads every payment of the company** (verified: log and
   `src/lib/tax/payments/service.ts`, `readPayments`). Six queries side by side, the payment query
   with every link, ordered, unbounded; then the funding resolution over all of them. `withSharedReads`
-  keeps it to one read per page, but one read is already 0.6 to 1.75 s and it grows with every
-  imported statement. It is the single largest cost in the dashboard, spending, the sidebar numbers
-  and finance. That the time is in the database rather than in the mapping is inferred (the step
-  wraps only the queries); an `EXPLAIN ANALYZE` on a copy settles it.
+  keeps it to one read per page, but one read shows 0.6 to 1.75 s and it grows with every imported
+  statement. It is the single largest cost in the dashboard, spending, the sidebar numbers and
+  finance. Two limits on that figure: steps that run side by side slow each other, as the timing
+  helper itself notes, so the read alone may be faster than the log says; and that the time is in
+  the database rather than in waiting for a connection is inferred. The ordered payment query already
+  has an index on `(auth_workspace_id, booking_day)` (`prisma/schema.prisma`); the number of payments
+  was not counted. An `EXPLAIN ANALYZE` on a restored copy settles both.
 - **S2. The sidebar numbers ran the dashboard's work on every click** (verified: request capture
   showed one server action on every non-dashboard page, and `AppStoreProvider` called `getNavCounts`,
   which runs `loadReviewQueue` and `loadMealRecords`, on every pathname change; its duration in the
@@ -158,17 +169,23 @@ include the one-off reading of every receipt):
 
 ### PWA
 
-- **P1. Installable, and the service worker does what it says** (verified: Chrome reports no
+- **P1. Installable, and the service worker is registered** (verified: Chrome reports no
   installability error and no manifest error; the worker is active with scope `/`; app id
-  `https://receipts.lumitra.co/app`). It caches only `offline.html`, answers the share target and
-  shows pushes, by design: the worker removed in March 2026 cached scripts and broke deployments.
+  `https://receipts.lumitra.co/app`). Read in `public/sw.js`, not exercised: it caches only
+  `offline.html`, answers the share target and shows pushes, by design, because the worker removed
+  in March 2026 cached scripts and broke deployments.
 - **P2. The manifest was out of date** (verified): name "Receipt OCR" and an OCR description, SVG
   icons only, no `id`, no language, no shortcuts. iOS takes no SVG for the home screen icon
   (`apple-touch-icon`) and shows a screenshot of the page instead (inferred from Apple's
   documentation, not tried on a device). **Fixed.**
-- **P3. The root layout blocked pinch zoom** (`maximumScale: 1`) and said `lang="en"` for German
-  pages, so screen readers read German with English rules and Chrome offers to translate (verified
-  in the code). **Fixed.**
+- **P3. The root layout said `lang="en"` for German pages,** so screen readers read German with
+  English rules and Chrome offers to translate (verified in the code). **Fixed;** the English landing
+  page says `lang="en"` on its own.
+- **P5. The page blocks pinch zoom** (`maximumScale: 1`, verified in the code), which fails people who
+  need larger text (WCAG 1.4.4, the success criterion on resizing text). Not changed here: allowing it
+  needs every field on a touch screen at 16 px or more, or iOS zooms into a field and stays zoomed,
+  and that rule resizes every input and select of the data table on phones. It is proven on phone
+  screenshots before it ships (section 4).
 - **P4. No offline view of the app's data.** Offline, a navigation shows `offline.html`, where a photo
   can still be queued. Whether the app should show the last seen receipts offline is a product
   question (see "Questions for Marlin").
@@ -186,15 +203,17 @@ production effect is measured after a deploy Marlin approves.
 | Spending, "Unklar" | 345 rows at once | 50, and 50 more per press (test) |
 | Manifest | "Receipt OCR", SVG icons only | "Lumitra Receipts", PNG 192, 512 and maskable 512, `id` `/app` (unchanged identity), German, 4 shortcuts (test checks sizes and files) |
 | iOS home screen icon | none usable (SVG) | 180 px PNG |
-| Pinch zoom | blocked | allowed; on touch screens fields are at least 16 px so iOS does not zoom in by itself |
-| Page language | `en` | `de`; titles read "Ausgaben · Lumitra Receipts" |
+| Page language | `en` | `de` (the English landing page `en`); titles read "Ausgaben · Lumitra Receipts" |
+| Upload page heading | "Receipt OCR" | "Lumitra Receipts" |
 
 - **Sidebar numbers** (`src/stores/provider.tsx`, `src/stores/AppStore.ts`): a page asks only when
   the last known numbers are older than a minute (`NAV_COUNTS_FRESH_MS`). The receipts page counts
   both in its own store and hands them over when it closes (`countsKnownAt`); the meals page hands
   over its meal number, which alone does not make the pair fresh. A
   failed answer makes the next page ask again, an answer that arrives after the next click still
-  shows, and a meal write that ends on another page still asks at once.
+  shows unless the receipts page handed over newer numbers in between, a receipt saved or discarded
+  on the upload page has the next page ask (`countsChanged`), and a meal write that ends on another
+  page still asks at once.
 - **`LazyDetails`** (`src/components/ui/LazyDetails.tsx`): a disclosure whose content is built on
   the first open and kept after it. Used for the spending page's payments table.
 
@@ -218,12 +237,12 @@ Effort: S under an hour, M about half a day, L more.
 ### 1. Make the payments read cheap (highest value, M to L)
 
 - [ ] **Find where `payments.read` spends its time and cut it** (S1). First an `EXPLAIN ANALYZE` of
-  the six queries on a restored copy (no production load), then the likely fixes: an index on
-  `(auth_workspace_id, booking_day, created_at)` for the ordered payment query, selecting only the
-  columns the rows use, and keeping the links query apart. Target: under 200 ms. Every page with a
-  log line gets faster by the same amount.
-- [ ] **Why the dashboard is slower than after the October fix** (verified regression: 1.0 to 1.1 s
-  then, 1.7 to 3.6 s now). Inferred cause: more payments and the review list now reading them
+  the six queries on a restored copy (no production load), with the payment count, then the fix the
+  plan shows (an index that also covers the `created_at` tie-break, selecting only the columns the
+  rows use, the links query apart, or keeping the result per company until a write). A target of
+  under 200 ms is a guess until that plan exists. Every page with a log line gains by the same amount.
+- [ ] **Why the dashboard is slower than after the October fix** (verified regression, warm against
+  warm: 1.0 to 1.1 s then, 1.7 to 1.9 s now). Inferred cause: more payments and the review list now reading them
   (`review.payments`). The step above is the first answer; compare the log after it.
 - [ ] **Measure finance** (S): wrap `FinancePage` in `measurePage` and `withSharedReads` like the
   other pages, so its server time is logged and its reads are shared.
@@ -254,8 +273,14 @@ Effort: S under an hour, M about half a day, L more.
 
 ### 4. PWA
 
+- [ ] **Allow pinch zoom, proven first** (P5): fields on touch screens at 16 px or more, compared on
+  phone screenshots with touch emulation (the receipts table's search, filters and selects
+  included), then `maximumScale` removed.
 - [ ] **Try the installed app on an iPhone and an Android phone after the deploy**: icon, name,
-  shortcuts (Android), share target (Android), pinch zoom, no zoom into fields.
+  shortcuts (Android), share target (Android), offline page, a push.
+- [ ] **The remaining "Receipt OCR" texts**: the English landing page and the push fallback title in
+  `public/sw.js` (changing the worker file updates every installed copy, so it goes with the next
+  worker change).
 
 ## Not measured
 
@@ -263,6 +288,8 @@ Effort: S under an hour, M about half a day, L more.
   machine was overloaded; such numbers would not have been comparable.
 - The server cost of one prefetch (below the log threshold).
 - How long a save waits behind a running server action (inferred from how Next.js queues them).
+- Which script files are largest and what is in them. Only the totals were measured (553 to 1,076
+  KB per page, 176 to 327 KB on the wire); a bundle analysis of a production build is open.
 
 ## Questions for Marlin
 
@@ -283,5 +310,10 @@ Effort: S under an hour, M about half a day, L more.
 - `src/app/app/spending/SpendingClient.test.tsx`: 120 payments build no table row while closed and
   120 on opening; "Unklar" shows 50, 100, 120; the existing tests open the table before reading it.
 - `src/lib/pwa/__tests__/manifest.test.ts`: `id`, name, language, PNG icons of the sizes they say,
-  the iOS icon named in the layout, `lang="de"`, no zoom block, shortcuts inside the app, the share
-  target the worker answers.
+  the iOS icon named in the layout, `lang="de"`, shortcuts inside the app, the share target the
+  worker answers.
+- `src/components/nav/__tests__/AppSidebar.test.tsx`: the sidebar asks again only once its numbers
+  are a minute old, and keeps the last ones when that fails.
+- `src/stores/__tests__/provider.test.tsx` also: an answer asked before the receipts page handed
+  over its numbers does not overwrite them; a receipt saved on the upload page has the next page ask,
+  once.

@@ -61,10 +61,13 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
     // (A store of a company left is thrown away with its key, so a late answer there changes nothing on screen.)
     const ask = () => {
       const mine = ++asked.current;
-      askedAt.current = Date.now();
+      const startedAt = Date.now();
+      askedAt.current = startedAt;
       getNavCounts()
         .then((result) => {
           if (mine !== asked.current) return;
+          // The receipts page handed over numbers it counted after this ask started (a receipt confirmed there): those are newer.
+          if (startedAt < store.countsKnownAt) return;
           if (result.ok) store.serverCounts(result.value);
           else askedAt.current = 0;
         })
@@ -72,7 +75,9 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
           if (mine === asked.current) askedAt.current = 0;
         });
     };
-    if (pathname !== DASHBOARD && Date.now() - Math.max(askedAt.current, store.countsKnownAt) >= NAV_COUNTS_FRESH_MS) ask();
+    const known = Math.max(askedAt.current, store.countsKnownAt);
+    // Stale by age, or because a page without a store of its own changed them since (an upload).
+    if (pathname !== DASHBOARD && (Date.now() - known >= NAV_COUNTS_FRESH_MS || store.countsChangedAt >= known)) ask();
     // A list action of the meals page that ends after the page closed: the number left behind took it for done.
     // On the dashboard the number on screen is its store's, so that is the one to ask.
     const stop = reaction(

@@ -33,9 +33,11 @@ export class AppStore {
    * decides whether the next page asks again (`AppStoreProvider`).
    */
   countsKnownAt = 0;
+  /** When something on a page without a store of its own may have changed the numbers (a receipt uploaded or discarded). 0 until then. */
+  countsChangedAt = 0;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChangedAt: false, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -45,6 +47,11 @@ export class AppStore {
       review: this.receipts?.reviewCount ?? this.fromServer?.review ?? 0,
       meals: this.meals?.queue.length ?? this.receipts?.openMeals ?? this.fromServer?.meals ?? 0,
     };
+  }
+
+  /** The next page asks the server again, however fresh the numbers were. */
+  countsChanged(now: number = Date.now()): void {
+    this.countsChangedAt = now;
   }
 
   serverCounts(counts: NavCounts, now: number = Date.now()): void {

@@ -41,8 +41,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // No maximum scale: a page that cannot be zoomed fails people who need larger text (WCAG 1.4.4).
-  // On touch screens every field is at least 16 px (globals.css), so iOS does not zoom into it by itself.
+  maximumScale: 1,
   themeColor: "#e2a348",
 };
 

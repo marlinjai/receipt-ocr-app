@@ -59,8 +59,6 @@ describe('public/manifest.json', () => {
     const layout = readFileSync(join(__dirname, '../../../app/layout.tsx'), 'utf8');
     expect(layout).toContain('/icons/apple-touch-icon-180.png');
     expect(layout).toContain('<html lang="de">');
-    // Pinch zoom stays allowed.
-    expect(layout).not.toMatch(/(maximumScale|userScalable)\s*:/);
   });
 
   it('offers shortcuts only to pages of the app', () => {

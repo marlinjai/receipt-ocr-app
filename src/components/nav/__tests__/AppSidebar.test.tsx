@@ -9,7 +9,7 @@ import type { ReviewEntry } from '@/lib/review/service';
 import { MealsStore } from '@/stores/MealsStore';
 import { ReceiptsStore, type ReceiptsApi } from '@/stores/ReceiptsStore';
 import AppSidebar from '../AppSidebar';
-import { AppStoreProvider, useAppStore } from '@/stores/provider';
+import { AppStoreProvider, NAV_COUNTS_FRESH_MS, useAppStore } from '@/stores/provider';
 
 const nav = vi.hoisted(() => ({ pathname: '/app/finance', getNavCounts: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
@@ -108,20 +108,34 @@ describe('the sidebar', () => {
     expect(screen.getByRole('link', { name: 'Belege' }).textContent).toBe('Belege');
   });
 
-  it('asks for the numbers on the way out of a page, and keeps the last ones when that fails', async () => {
-    const view = sidebar();
-    await screen.findByText('14');
-    expect(nav.getNavCounts).toHaveBeenCalledTimes(1);
+  it('asks again on the way out of a page once its numbers are a minute old, and keeps the last ones when that fails', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const view = sidebar();
+      await screen.findByText('14');
+      expect(nav.getNavCounts).toHaveBeenCalledTimes(1);
+      const rerender = (path: string) => {
+        nav.pathname = path;
+        view.rerender(
+          <AppStoreProvider company="Beispiel GmbH">
+            <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
+          </AppStoreProvider>,
+        );
+      };
 
-    nav.pathname = '/app/meals';
-    nav.getNavCounts.mockResolvedValue({ ok: false });
-    view.rerender(
-      <AppStoreProvider company="Beispiel GmbH">
-        <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
-      </AppStoreProvider>,
-    );
-    await waitFor(() => expect(nav.getNavCounts).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('14')).toBeTruthy();
+      // Fresh numbers: a click to another page does not ask (each ask costs the server the review list).
+      rerender('/app/meals');
+      await act(async () => {});
+      expect(nav.getNavCounts).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date(Date.now() + NAV_COUNTS_FRESH_MS));
+      nav.getNavCounts.mockResolvedValue({ ok: false });
+      rerender('/app/rules');
+      await waitFor(() => expect(nav.getNavCounts).toHaveBeenCalledTimes(2));
+      expect(screen.getByText('14')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('takes the numbers from the dashboard instead of asking again', async () => {

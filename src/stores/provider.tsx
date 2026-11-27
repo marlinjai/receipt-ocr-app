@@ -61,20 +61,14 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
     // (A store of a company left is thrown away with its key, so a late answer there changes nothing on screen.)
     const ask = () => {
       const mine = ++asked.current;
-      const startedAt = Date.now();
-      askedAt.current = startedAt;
-      store.countsAsked();
-      getNavCounts()
-        .then((result) => {
-          if (mine !== asked.current) return;
-          // The receipts page handed over numbers it counted after this ask started (a receipt confirmed there): those are newer.
-          if (startedAt < store.countsKnownAt) return;
-          if (result.ok) store.serverCounts(result.value);
-          else askedAt.current = 0;
-        })
-        .catch(() => {
-          if (mine === asked.current) askedAt.current = 0;
-        });
+      askedAt.current = Date.now();
+      const sent = store.countsAsked();
+      // Only the latest ask settles. One that brought no numbers lets the next page ask at once.
+      const settle = (result: Awaited<ReturnType<typeof getNavCounts>> | null) => {
+        if (mine !== asked.current) return;
+        if (!store.countsAnswered(sent, result)) askedAt.current = 0;
+      };
+      getNavCounts().then(settle, () => settle(null));
     };
     const known = Math.max(askedAt.current, store.countsKnownAt);
     // Stale by age, or because a page without a store of its own changed them since (an upload).

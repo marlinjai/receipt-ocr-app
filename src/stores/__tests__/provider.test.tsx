@@ -314,4 +314,41 @@ describe('the numbers of the navigation when the page changes', () => {
     await page.go('/app/finance');
     expect(getNavCounts).toHaveBeenCalledTimes(2);
   });
+
+  it('an ask after an upload that fails leaves the upload open, so the next page asks again although the numbers are fresh', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-27T10:00:00Z'));
+    getNavCounts.mockImplementation(async () => ({ ok: true, value: { review: 1, meals: 0 } }) as never);
+    const page = onPage('/app/spending');
+    await act(async () => {});
+    await page.go('/app');
+    page.app().countsChanged();
+    getNavCounts.mockImplementationOnce(async () => ({ ok: false }) as never);
+    await page.go('/app/finance');
+    expect(getNavCounts).toHaveBeenCalledTimes(2);
+    getNavCounts.mockImplementationOnce(async () => {
+      throw new Error('offline');
+    });
+    await page.go('/app/rules');
+    expect(getNavCounts).toHaveBeenCalledTimes(3);
+    await page.go('/app/meals');
+    expect(getNavCounts).toHaveBeenCalledTimes(4);
+    expect(page.app().counts).toEqual({ review: 1, meals: 0 });
+    // Answered at last: covered, so the next page stays quiet.
+    await page.go('/app/finance');
+    expect(getNavCounts).toHaveBeenCalledTimes(4);
+  });
+
+  it('a hand-over of the receipts page in the same millisecond as an ask still wins over its answer', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-27T10:00:00Z'));
+    let answer: (value: unknown) => void = () => {};
+    getNavCounts.mockImplementation(() => new Promise((resolve) => (answer = resolve)) as never);
+    const page = onPage('/app/spending');
+    expect(getNavCounts).toHaveBeenCalledTimes(1);
+    const close = page.app().openReceipts({ reviewCount: 2, openMeals: 3 } as unknown as ReceiptsStore);
+    close();
+    await act(async () => answer({ ok: true, value: { review: 6, meals: 3 } }));
+    expect(page.app().counts).toEqual({ review: 2, meals: 3 });
+  });
 });

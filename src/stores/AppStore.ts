@@ -7,6 +7,12 @@ import { MealsOutbox } from './MealsOutbox';
 import type { MealsStore } from './MealsStore';
 import type { ReceiptsStore } from './ReceiptsStore';
 
+/** What an ask for the numbers was sent against, to settle its answer with (`countsAsked`, `countsAnswered`). */
+export interface CountsAsk {
+  readonly handovers: number;
+  readonly coveredBefore: number;
+}
+
 /**
  * What the whole app shares on the client, for one company: the store of each
  * domain whose page is open, and the numbers of the navigation. A number comes
@@ -41,9 +47,11 @@ export class AppStore {
    */
   countsChanges = 0;
   countsChangesCovered = 0;
+  /** How often the receipts page handed over numbers it counted itself. Orders a hand-over against an ask without the clock. */
+  countsHandovers = 0;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChanges: false, countsChangesCovered: false, countsChangedSince: false, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChanges: false, countsChangesCovered: false, countsHandovers: false, countsChangedSince: false, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -65,9 +73,26 @@ export class AppStore {
     return this.countsChanges !== this.countsChangesCovered;
   }
 
-  /** An ask for the numbers starts: every change made until now is in its answer. */
-  countsAsked(): void {
+  /** An ask for the numbers starts: every change made until now will be in its answer. */
+  countsAsked(): CountsAsk {
+    const sent = { handovers: this.countsHandovers, coveredBefore: this.countsChangesCovered };
     this.countsChangesCovered = this.countsChanges;
+    return sent;
+  }
+
+  /**
+   * The answer to an ask arrived (`null`: the call itself threw). Returns false when it brought
+   * no numbers, so the next page asks again. A hand-over since the ask was sent is newer than
+   * the answer and stays. A failed ask covered nothing: the changes it took on are open again.
+   */
+  countsAnswered(sent: CountsAsk, result: { ok: true; value: NavCounts } | { ok: false } | null): boolean {
+    if (this.countsHandovers !== sent.handovers) return true;
+    if (result?.ok) {
+      this.serverCounts(result.value);
+      return true;
+    }
+    this.countsChangesCovered = sent.coveredBefore;
+    return false;
   }
 
   serverCounts(counts: NavCounts, now: number = Date.now()): void {
@@ -143,6 +168,7 @@ export class AppStore {
     if (this.fromServer) {
       this.countsKnownAt = Date.now();
       this.countsChangesCovered = this.countsChanges;
+      this.countsHandovers += 1;
     }
     this.receipts = null;
   }

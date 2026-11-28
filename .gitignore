@@ -56,3 +56,7 @@ wrangler.jsonc
 .infisical.json
 .infisical.yaml
 
+
+# Worktrees of agent sessions are checkouts of their own, never source of this one (check-on-hermes
+# copies what .gitignore does not exclude, and linted two other sessions' worktrees on 2026-11-27).
+.claude/worktrees/

@@ -1,6 +1,7 @@
 'use client';
 
-import { Suspense, useCallback, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { AppStoreContext } from '@/stores/provider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
@@ -68,12 +69,21 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
   const paymentId = uploadFor && uploadFor.workspaceId === workspaceId ? (paymentToLink(uploadFor, progress) ?? null) : null;
   const forPayment = useMemo<UploadForPayment | null>(() => (paymentId ? { paymentId, claim: linkExistingUpload } : null), [paymentId]);
   // Discarding the receipt that was linked takes its links along: the payment waits again.
+  // A saved or discarded receipt can change the sidebar's numbers ("Belege prüfen", "Bewirtung"); this page keeps no
+  // store that counts them, so the next page asks the server again. Optional: the page also renders outside the app shell in tests.
+  const app = useContext(AppStoreContext);
+  const changed = useCallback(<T,>(result: T): T => {
+    app?.countsChanged();
+    return result;
+  }, [app]);
+
   const discardRow = useCallback(
     async (rowId: string) => {
       await deleteRow(rowId);
+      changed(null);
       move(afterDiscard(progressNow.current, rowId));
     },
-    [move],
+    [move, changed],
   );
 
   const processFile = useCallback(
@@ -82,21 +92,21 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
         { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
         result.ocrResult,
         options,
-      ),
-    [],
+      ).then(changed),
+    [changed],
   );
 
   // Phone capture: the same save, plus a retake that reads a new photo into an existing receipt.
   const saveCapture = useCallback<SaveReceipt>(
     (file, ocr, options) =>
-      processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options),
-    [],
+      processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options).then(changed),
+    [changed],
   );
   const retakeCapture = useCallback(
     (rowId: string): SaveReceipt =>
       (file, ocr, options) =>
-        retakeReceipt(rowId, { id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, { sha256: options.sha256 }),
-    [],
+        retakeReceipt(rowId, { id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, { sha256: options.sha256 }).then(changed),
+    [changed],
   );
 
   const handleAllComplete = useCallback((stats: BatchStats) => {
@@ -138,7 +148,7 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
             className="text-4xl font-bold tracking-tight mb-3"
             style={{ color: 'var(--foreground)' }}
           >
-            Receipt OCR
+            Lumitra Receipts
           </h1>
 
           <p

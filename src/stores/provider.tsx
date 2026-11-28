@@ -16,6 +16,17 @@ export const RefusalDeskContext = createContext<RefusalDesk | null>(null);
 
 const DASHBOARD = '/app/dashboard';
 
+/**
+ * How long a number of the navigation counts as fresh when the page changes. Counting
+ * costs the server as much as the dashboard's review list and the meals register
+ * together (1.2 to 3 s per call in production on 2026-11-27), and a server action
+ * holds every later one of the page in line behind it. Asked on every page change,
+ * it made each click in the navigation wait for that work. A page whose store has
+ * the numbers (dashboard, meals) hands them over when it closes, and a meal write
+ * that ends elsewhere still asks at once (below).
+ */
+export const NAV_COUNTS_FRESH_MS = 60_000;
+
 /** Above the provider the company keys, so a refusal outlives the company it belongs to. */
 export function RefusalDeskProvider({ children }: { children: ReactNode }) {
   const [desk] = useState(() => new RefusalDesk());
@@ -32,6 +43,11 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
   const [store] = useState(() => new AppStore());
   const desk = useContext(RefusalDeskContext);
   const pathname = usePathname();
+  // When the server was last asked for the numbers; 0 until then and after a failed answer, so the next page asks again.
+  // An ask on its way counts as fresh: a second click must not start the same work again.
+  const askedAt = useRef(0);
+  // Only the latest answer counts: an older call finishing last must not overwrite the newer number.
+  const asked = useRef(0);
 
   // The key changing takes this store away. What it still has to say goes to the desk, with the company's name.
   useEffect(() => {
@@ -41,18 +57,22 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
   }, [store, desk, company]);
 
   useEffect(() => {
-    let left = false;
-    // Only the latest answer counts: an older call finishing last must not overwrite the newer number.
-    let asked = 0;
+    // An answer that arrives after the page changed still counts: the next page does not ask while it is fresh.
+    // (A store of a company left is thrown away with its key, so a late answer there changes nothing on screen.)
     const ask = () => {
-      const mine = ++asked;
-      getNavCounts()
-        .then((result) => {
-          if (!left && mine === asked && result.ok) store.serverCounts(result.value);
-        })
-        .catch(() => {});
+      const mine = ++asked.current;
+      askedAt.current = Date.now();
+      const sent = store.countsAsked();
+      // Only the latest ask settles. One that brought no numbers lets the next page ask at once.
+      const settle = (result: Awaited<ReturnType<typeof getNavCounts>> | null) => {
+        if (mine !== asked.current) return;
+        if (!store.countsAnswered(sent, result)) askedAt.current = 0;
+      };
+      getNavCounts().then(settle, () => settle(null));
     };
-    if (pathname !== DASHBOARD) ask();
+    const known = Math.max(askedAt.current, store.countsKnownAt);
+    // Stale by age, or because a page without a store of its own changed them since (an upload).
+    if (pathname !== DASHBOARD && (Date.now() - known >= NAV_COUNTS_FRESH_MS || store.countsChangedSince)) ask();
     // A list action of the meals page that ends after the page closed: the number left behind took it for done.
     // On the dashboard the number on screen is its store's, so that is the one to ask.
     const stop = reaction(
@@ -63,10 +83,7 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
         else ask();
       },
     );
-    return () => {
-      left = true;
-      stop();
-    };
+    return stop;
   }, [pathname, store]);
 
   // An answer of the receipt checks or a list action of the meals page shows at once and is sent after that: closing the page now would lose what is queued.

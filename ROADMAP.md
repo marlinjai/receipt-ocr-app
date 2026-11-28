@@ -2,6 +2,13 @@
 
 ## Planned
 
+- [ ] Receipts performance, installed app and navigation: measured review on production (every page
+  reads every payment of the company, 0.6 to 1.75 s; the sidebar numbers re-ran the review list on
+  every click; the spending page built 28,435 elements). Fixed on the local branch
+  `perf/receipts-perf-pwa-ux-review`, waiting for Marlin's go to merge and deploy: the sidebar
+  numbers, the spending page's closed table and "Unklar" list, manifest, icons, language and zoom.
+  Next: make the payments read cheap.
+  [plan](docs/plans/2026-11-26-receipts-perf-pwa-ux-review.md) (2026-11-27)
 - [x] Lumitra Feedback in the signed-in app: "Feedback" in the sidebar and the "Mehr" sheet opens the
   feedback service's widget (German, the screenshot optional; contacts, meal register, payments,
   counterparties and overdue invoices masked), sending to its "Receipts (dogfood)" project, which mails

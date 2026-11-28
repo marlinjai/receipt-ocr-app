@@ -2,7 +2,8 @@ import Link from 'next/link';
 
 export default function LandingPage() {
   return (
-    <div className="relative z-10 min-h-screen flex flex-col">
+    // The landing page is written in English; the app's pages are German (the root layout says "de").
+    <div lang="en" className="relative z-10 min-h-screen flex flex-col">
       {/* Nav */}
       <nav className="glass-nav sticky top-0 z-50 w-full max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-2">

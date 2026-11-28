@@ -7,6 +7,12 @@ import { MealsOutbox } from './MealsOutbox';
 import type { MealsStore } from './MealsStore';
 import type { ReceiptsStore } from './ReceiptsStore';
 
+/** What an ask for the numbers was sent against, to settle its answer with (`countsAsked`, `countsAnswered`). */
+export interface CountsAsk {
+  readonly handovers: number;
+  readonly coveredBefore: number;
+}
+
 /**
  * What the whole app shares on the client, for one company: the store of each
  * domain whose page is open, and the numbers of the navigation. A number comes
@@ -27,9 +33,25 @@ export class AppStore {
   /** The refusals of finance writes answered after the finance page closed. */
   readonly financeOutbox = new FinanceOutbox();
   private fromServer: NavCounts | null = null;
+  /**
+   * When the numbers were last known to be right: an answer of the server, or a page whose
+   * store counted them handing them over as it closed. 0 until then. Not observed: it only
+   * decides whether the next page asks again (`AppStoreProvider`).
+   */
+  countsKnownAt = 0;
+  /**
+   * How often a page without a store of its own may have changed the numbers (a receipt uploaded
+   * or discarded), and how many of those changes the last ask or hand-over already covers. A
+   * count, not a time: a change and an ask in the same millisecond must not be told apart by
+   * the clock. Not observed, like `countsKnownAt`.
+   */
+  countsChanges = 0;
+  countsChangesCovered = 0;
+  /** How often the receipts page handed over numbers it counted itself. Orders a hand-over against an ask without the clock. */
+  countsHandovers = 0;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, countsKnownAt: false, countsChanges: false, countsChangesCovered: false, countsHandovers: false, countsChangedSince: false, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -41,8 +63,41 @@ export class AppStore {
     };
   }
 
-  serverCounts(counts: NavCounts): void {
+  /** The next page asks the server again, however fresh the numbers were. */
+  countsChanged(): void {
+    this.countsChanges += 1;
+  }
+
+  /** Whether a change happened that neither an ask nor a hand-over has covered yet. */
+  get countsChangedSince(): boolean {
+    return this.countsChanges !== this.countsChangesCovered;
+  }
+
+  /** An ask for the numbers starts: every change made until now will be in its answer. */
+  countsAsked(): CountsAsk {
+    const sent = { handovers: this.countsHandovers, coveredBefore: this.countsChangesCovered };
+    this.countsChangesCovered = this.countsChanges;
+    return sent;
+  }
+
+  /**
+   * The answer to an ask arrived (`null`: the call itself threw). Returns false when it brought
+   * no numbers, so the next page asks again. A hand-over since the ask was sent is newer than
+   * the answer and stays. A failed ask covered nothing: the changes it took on are open again.
+   */
+  countsAnswered(sent: CountsAsk, result: { ok: true; value: NavCounts } | { ok: false } | null): boolean {
+    if (this.countsHandovers !== sent.handovers) return true;
+    if (result?.ok) {
+      this.serverCounts(result.value);
+      return true;
+    }
+    this.countsChangesCovered = sent.coveredBefore;
+    return false;
+  }
+
+  serverCounts(counts: NavCounts, now: number = Date.now()): void {
     this.fromServer = counts;
+    this.countsKnownAt = now;
   }
 
   /** The domain's page opened. The return is for when it closes: its last number stays until the server says otherwise. */
@@ -55,6 +110,7 @@ export class AppStore {
 
   private closeMeals(meals: MealsStore): void {
     if (this.meals !== meals) return;
+    // The meal number is the store's own; the review number is whatever was known, so it does not make the pair fresh.
     this.fromServer = { review: this.counts?.review ?? 0, meals: meals.queue.length };
     this.meals = null;
     this.mealOutbox.open = null;
@@ -108,6 +164,12 @@ export class AppStore {
   private closeReceipts(receipts: ReceiptsStore): void {
     if (this.receipts !== receipts) return;
     this.fromServer = this.counts;
+    // The dashboard's store counted both numbers itself.
+    if (this.fromServer) {
+      this.countsKnownAt = Date.now();
+      this.countsChangesCovered = this.countsChanges;
+      this.countsHandovers += 1;
+    }
     this.receipts = null;
   }
 }

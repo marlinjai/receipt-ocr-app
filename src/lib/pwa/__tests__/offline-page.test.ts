@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { OFFLINE_DB_NAME, OFFLINE_DB_VERSION, OFFLINE_KEY, OFFLINE_STORE_NAME, openOfflineStore, type OfflineReceipt } from '@/lib/offline/receipts-db';
+import { OFFLINE_DB_NAME, OFFLINE_DB_VERSION, OFFLINE_KEY, OFFLINE_MAX_AGE_MS, OFFLINE_STORE_NAME, openOfflineStore, type OfflineReceipt } from '@/lib/offline/receipts-db';
 
 const SOURCE = readFileSync(path.join(process.cwd(), 'public', 'offline.html'), 'utf8');
 const SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(SOURCE)![1];
@@ -15,8 +15,8 @@ function receipt(i: number, extra: Partial<OfflineReceipt> = {}): OfflineReceipt
 
 let factory: IDBFactory;
 
-async function openPage(receipts: OfflineReceipt[] | null) {
-  if (receipts) await openOfflineStore(factory).write({ workspaceId: 'ws-a', company: 'Firma A', receipts, savedAt: Date.UTC(2026, 10, 28, 9, 30) });
+async function openPage(receipts: OfflineReceipt[] | null, savedAt = Date.now() - 60_000) {
+  if (receipts) await openOfflineStore(factory).write({ workspaceId: 'ws-a', company: 'Firma A', receipts, savedAt }, 0);
   document.body.innerHTML = BODY;
   new Function(SCRIPT)();
 }
@@ -35,6 +35,14 @@ describe('public/offline.html: the receipts list kept on this device', () => {
     expect(SOURCE).toContain(`var LIST_DB_VERSION = ${OFFLINE_DB_VERSION};`);
     expect(SOURCE).toContain(`var LIST_STORE_NAME = '${OFFLINE_STORE_NAME}';`);
     expect(SOURCE).toContain(`var LIST_KEY = '${OFFLINE_KEY}';`);
+    expect(SOURCE).toContain(`var MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;`);
+    expect(30 * 24 * 60 * 60 * 1000).toBe(OFFLINE_MAX_AGE_MS);
+  });
+
+  it('shows no list saved more than 30 days ago (a device left signed in somewhere)', async () => {
+    await openPage([receipt(1)], Date.now() - OFFLINE_MAX_AGE_MS - 1000);
+    await new Promise((r) => setTimeout(r, 20));
+    expect($('#saved').hidden).toBe(true);
   });
 
   it('shows the first 100 receipts with company and time saved, then the rest on request', async () => {

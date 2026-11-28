@@ -1,8 +1,8 @@
 /**
  * The receipts list kept on this device for the offline page (plan
  * docs/plans/2026-11-28-offline-receipts.md). The app writes it, `public/offline.html`
- * reads it without any app script. The four names below must match that page (a test
- * compares them).
+ * reads it without any app script, and the service worker deletes it when the session is gone.
+ * The names below must match those two files (a test compares them).
  *
  * One list at a time: the company last open on this device. Signing out, or the server
  * saying the session is gone, deletes it, because the offline page is a public file that
@@ -13,6 +13,15 @@ export const OFFLINE_DB_NAME = 'receipts-offline';
 export const OFFLINE_DB_VERSION = 1;
 export const OFFLINE_STORE_NAME = 'snapshot';
 export const OFFLINE_KEY = 'current';
+/**
+ * How often the list was deleted on this device, kept beside it. A save reads it when it starts and
+ * writes only if it is unchanged: a sign-out in any tab while the save was on its way wins, without
+ * comparing clocks.
+ */
+export const OFFLINE_DELETIONS_KEY = 'deletions';
+const DELETIONS_KEY = OFFLINE_DELETIONS_KEY;
+/** The offline page shows no list older than this: a device left signed in elsewhere does not keep showing it forever. */
+export const OFFLINE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** One receipt as the offline page shows it. Labels, never option ids; null where the receipt has no value. */
 export interface OfflineReceipt {
@@ -43,9 +52,14 @@ export interface OfflineSnapshot extends OfflineReceiptsResponse {
 }
 
 export interface OfflineStore {
-  read(): Promise<OfflineSnapshot | null>;
-  /** Saves the list unless `stillWanted` says no at the moment the write is placed. Returns whether it was saved. */
-  write(snapshot: OfflineSnapshot, stillWanted?: () => boolean): Promise<boolean>;
+  /** The list kept, and how often a list was deleted here so far (hand it to `write`). */
+  read(): Promise<{ snapshot: OfflineSnapshot | null; deletions: number }>;
+  /**
+   * Saves the list, unless it was deleted since `deletions` was read (a sign-out, in any tab) or
+   * `stillWanted` says no when the write is placed. Returns whether it was saved.
+   */
+  write(snapshot: OfflineSnapshot, deletions: number, stillWanted?: () => boolean): Promise<boolean>;
+  /** Deletes the list and counts the deletion, so a save that started before it never writes. */
   clear(): Promise<void>;
 }
 
@@ -73,6 +87,8 @@ function isSnapshot(value: unknown): value is OfflineSnapshot {
   return !!v && typeof v.workspaceId === 'string' && typeof v.savedAt === 'number' && Array.isArray(v.receipts);
 }
 
+const count = (value: unknown): number => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0);
+
 /** The list backed by IndexedDB. Each method rejects when the browser has no usable IndexedDB. */
 export function openOfflineStore(factory: IDBFactory = indexedDB): OfflineStore {
   return {
@@ -80,33 +96,47 @@ export function openOfflineStore(factory: IDBFactory = indexedDB): OfflineStore 
       const db = await openDatabase(factory);
       try {
         const tx = db.transaction(OFFLINE_STORE_NAME, 'readonly');
-        const request = tx.objectStore(OFFLINE_STORE_NAME).get(OFFLINE_KEY);
+        const store = tx.objectStore(OFFLINE_STORE_NAME);
+        const list = store.get(OFFLINE_KEY);
+        const deleted = store.get(DELETIONS_KEY);
         await settle(tx);
-        return isSnapshot(request.result) ? request.result : null;
+        return { snapshot: isSnapshot(list.result) ? list.result : null, deletions: count(deleted.result) };
       } finally {
         db.close();
       }
     },
-    async write(snapshot, stillWanted = () => true) {
+    async write(snapshot, deletions, stillWanted = () => true) {
       const db = await openDatabase(factory);
       try {
-        // Checked when the transaction is placed: IndexedDB runs transactions on one store in the
-        // order they were created, so a `clear` placed after this check always runs after this write.
         if (!stillWanted()) return false;
+        // One transaction reads the count and writes the list: IndexedDB runs transactions on one store
+        // one after another, so a deletion is either fully before this (the count differs) or after it.
         const tx = db.transaction(OFFLINE_STORE_NAME, 'readwrite');
-        tx.objectStore(OFFLINE_STORE_NAME).put(snapshot, OFFLINE_KEY);
+        const store = tx.objectStore(OFFLINE_STORE_NAME);
+        let saved = false;
+        const current = store.get(DELETIONS_KEY);
+        current.onsuccess = () => {
+          if (count(current.result) !== deletions) return;
+          store.put(snapshot, OFFLINE_KEY);
+          saved = true;
+        };
         await settle(tx);
-        return true;
+        return saved;
       } finally {
         db.close();
       }
     },
     async clear() {
-      // The store is emptied, not the database deleted: a delete waits behind every open connection (another tab).
+      // The key is deleted, not the database: a database delete waits behind every open connection (another tab).
       const db = await openDatabase(factory);
       try {
         const tx = db.transaction(OFFLINE_STORE_NAME, 'readwrite');
-        tx.objectStore(OFFLINE_STORE_NAME).clear();
+        const store = tx.objectStore(OFFLINE_STORE_NAME);
+        const current = store.get(DELETIONS_KEY);
+        current.onsuccess = () => {
+          store.delete(OFFLINE_KEY);
+          store.put(count(current.result) + 1, DELETIONS_KEY);
+        };
         await settle(tx);
       } finally {
         db.close();

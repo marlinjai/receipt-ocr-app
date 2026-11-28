@@ -60,13 +60,13 @@ describe('signOutWithPush', () => {
     const order: string[] = [];
     const go = vi.fn(() => order.push('go'));
     await signOutWithPush(null, '/logout', go, { forgetPushEverywhere: vi.fn(), clearOffline: async () => void order.push('clear') });
-    expect(order).toEqual(['clear', 'go']);
+    expect(order).toEqual(['clear', 'clear', 'go']);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await signOutWithPush(null, '/logout', go, { forgetPushEverywhere: vi.fn(), clearOffline: async () => { throw new Error('no IndexedDB'); } });
     expect(go).toHaveBeenCalledTimes(2);
     warn.mockRestore();
     clearOfflineSnapshot.mockClear();
     await signOutWithPush(null, '/logout', go);
-    expect(clearOfflineSnapshot).toHaveBeenCalledTimes(1);
+    expect(clearOfflineSnapshot).toHaveBeenCalledTimes(2);
   });
 });

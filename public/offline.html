@@ -133,6 +133,8 @@
   var LIST_STORE_NAME = 'snapshot';
   var LIST_KEY = 'current';
   var PAGE = 100;
+  // A list older than this is not shown (src/lib/offline/receipts-db.ts, OFFLINE_MAX_AGE_MS).
+  var MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   var saved = document.getElementById('saved');
   var listEl = document.getElementById('list');
   var countEl = document.getElementById('count');
@@ -227,7 +229,8 @@
   }
 
   readList().then(function (snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.receipts)) return;
+    if (!snapshot || !Array.isArray(snapshot.receipts) || typeof snapshot.savedAt !== 'number') return;
+    if (Date.now() - snapshot.savedAt > MAX_AGE_MS) return;
     receipts = snapshot.receipts.filter(function (r) { return r && typeof r.id === 'string'; });
     receipts.forEach(function (r) { r._words = words(r); });
     var when = typeof snapshot.savedAt === 'number' ? new Date(snapshot.savedAt) : null;

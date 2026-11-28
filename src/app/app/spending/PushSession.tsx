@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { clearOfflineSnapshot } from '@/lib/offline/sync';
 import { enablePush, forgetPushEverywhere, pushStateOfDevice } from './loop-actions';
 import { browserPushEnvironment, currentSubscription, switchPushOff, type PushEnvironment } from './push-device';
@@ -59,18 +59,24 @@ export async function signOutWithPush(
     // Signing out never waits on push: the device is forgotten within a week anyway.
     console.warn('[push] could not switch push off before signing out', e);
   }
+  // Once more right before leaving: a save another tab finished while push was switched off is gone too.
+  try {
+    await (deps.clearOffline ?? clearOfflineSnapshot)();
+  } catch {
+    // Said above already when the device has no usable storage.
+  }
   go(logoutUrl);
 }
 
-export function SignOutLink({ href, title, children, environment }: { href: string; title?: string; children: ReactNode; environment?: PushEnvironment | null }) {
+export function SignOutLink({ href, title, children, environment, className = 'text-xs transition-colors hover:underline', style = { color: 'var(--muted)' } }: { href: string; title?: string; children: ReactNode; environment?: PushEnvironment | null; className?: string; style?: CSSProperties }) {
   const [busy, setBusy] = useState(false);
   return (
     <a
       href={href}
       title={title}
       aria-busy={busy}
-      className="text-xs transition-colors hover:underline"
-      style={{ color: 'var(--muted)' }}
+      className={className}
+      style={style}
       onClick={(e) => {
         e.preventDefault();
         if (busy) return;

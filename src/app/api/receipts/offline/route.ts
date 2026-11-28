@@ -9,7 +9,7 @@ import { measurePage } from '@/lib/timing';
  * GET /api/receipts/offline: the receipts of the active company as the offline page lists
  * them (plan docs/plans/2026-11-28-offline-receipts.md). The company comes from the session
  * only. 401 without a session: the app then deletes the list kept on the device; 503 when the
- * session cannot be checked, so the list stays.
+ * session cannot be checked (the middleware's answer to an auth outage), so the list stays.
  */
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +21,9 @@ export async function GET(): Promise<Response> {
     try {
       session = await requireReceiptsSession();
     } catch (e) {
-      // Only a refused session says "signed out" (the app then deletes the list on the device). An
-      // auth service that cannot be reached is a 503: the list stays.
+      // Only a refused session says "signed out" (the app then deletes the list on the device). The
+      // middleware already answers an auth outage with 503 before this route runs; anything else
+      // thrown here is a 503 too, so the list stays.
       if (!(e instanceof ReceiptsAuthError)) return Response.json({ error: 'unavailable' }, { status: 503, headers: NO_STORE });
       return Response.json({ error: e.status === 401 ? 'unauthorized' : 'forbidden' }, { status: e.status === 401 ? 401 : 403, headers: NO_STORE });
     }

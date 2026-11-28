@@ -50,8 +50,18 @@ So the offline list is not a cached app page. It is data:
 - **The saved list is deleted on sign-out** (`signOutWithPush`), **and when the server refuses
   the session** (expired, signed out elsewhere, removed from the company). Against: the next
   person who uses the same browser. `/offline.html` is a public file, so without it the page
-  would show the receipts without any session. A save still on its way is stopped first, so it
-  cannot write the list back.
+  would show the receipts without any session. A save still on its way is stopped first, no save
+  starts in that tab afterwards, and the list is deleted once more right before leaving. Every
+  deletion is counted next to the list, and a save writes only if the count did not change since it
+  started, so a sign-out in another tab wins too. The no-access page's sign-out does the same.
+- **The service worker deletes the list when a page of the app answers with a redirect.** The
+  app's own pages never redirect; the middleware does when the session expired, was ended at
+  auth.lumitra.co or in another app, or the access was removed, and then no app code runs that
+  could get a 401. Against: the same next person.
+- **The offline page shows no list saved more than 30 days ago.** Against: a browser where none of
+  the above ran (signed in, then never opened again).
+- **An answer for another company than the page shows deletes the list.** Against: a person
+  removed from a company whose installed app stayed open.
 - **One company at a time**: a switch replaces the list, and a list of another company is never
   shown as current. Against: nobody; it keeps the offline view right.
 - **Rendered as text, never as HTML.** Against: a vendor name or file name read from a receipt
@@ -63,6 +73,9 @@ So the offline list is not a cached app page. It is data:
 
 - **Text only, no receipt images offline.** Images would cost hundreds of megabytes on the phone
   for a few thousand receipts. Can follow if wanted.
+- **Lists older than 30 days are not shown offline.** Long enough for travel without a
+  connection; a device not used for a month should not keep showing receipts.
+- **An auth outage keeps the list**: the middleware answers it with 503 before the route runs.
 - **Freshness of one hour**, and saved again after an upload (the next save after an hour picks
   it up). The page shows when the list was saved.
 - Theme colour stays amber (Marlin, 2026-11-28).

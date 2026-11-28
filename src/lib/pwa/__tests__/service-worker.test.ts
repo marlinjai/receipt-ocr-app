@@ -6,6 +6,7 @@ import { openCaptureStore } from '@/lib/capture/offline-queue';
 import { sharedNotice } from '@/lib/capture/shared-notice';
 import { CAPTURE_DB_NAME, CAPTURE_DB_VERSION, CAPTURE_STORE_NAME } from '@/lib/capture/offline-queue';
 import { syncServiceWorker } from '../service-worker';
+import { OFFLINE_DB_NAME, OFFLINE_DB_VERSION, OFFLINE_DELETIONS_KEY, OFFLINE_KEY, OFFLINE_STORE_NAME, openOfflineStore } from '@/lib/offline/receipts-db';
 
 const PUBLIC = path.resolve(__dirname, '../../../../public');
 const SW_SOURCE = readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
@@ -94,8 +95,11 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[]; wind
       mode: init.mode ?? 'no-cors',
       formData: init.formData,
     };
-    listeners.get('fetch')!({ request: req, respondWith: (p: Promise<Response>) => (responded = p) });
-    return responded ? await (responded as Promise<Response>) : null;
+    const extended: Promise<unknown>[] = [];
+    listeners.get('fetch')!({ request: req, respondWith: (p: Promise<Response>) => (responded = p), waitUntil: (p: Promise<unknown>) => extended.push(p) });
+    const response = responded ? await (responded as Promise<Response>) : null;
+    await Promise.all(extended);
+    return response;
   }
 
   /** Dispatch any other event (push, notificationclick) and wait for what it handed to waitUntil. */
@@ -147,9 +151,11 @@ describe('public/sw.js: it never serves application code', () => {
   });
 
   it('the source contains no cache.put and no cache-first lookup for scripts', () => {
-    // The only `.put(` is the IndexedDB write of a shared file into the capture queue.
-    expect(SW_SOURCE.match(/\.put\(/g)).toHaveLength(1);
-    expect(SW_SOURCE).toMatch(/store\.put\(/);
+    // Every `.put(` is an IndexedDB write (a shared file into the capture queue, the deletion count
+    // of the offline list), never a write into a cache.
+    expect(SW_SOURCE.match(/\.put\(/g)).toHaveLength(2);
+    expect(SW_SOURCE.match(/\bstore\.put\(/g)).toHaveLength(2);
+    expect(SW_SOURCE).not.toMatch(/cache\.put\(/);
     expect(SW_SOURCE).not.toMatch(/addAll/);
     expect(SW_SOURCE.match(/caches\.match\(/g)).toHaveLength(1);
   });
@@ -264,6 +270,47 @@ describe('public/sw.js: share target', () => {
     expect(sharedNotice('1')!.text).toMatch(/1 geteilte Datei wurde übernommen/);
     for (const code of ['unsupported', 'unavailable', 'failed']) expect(sharedNotice(code)!.tone).toBe('error');
     for (const none of [null, '', '0', 'anything-else']) expect(sharedNotice(none)).toBeNull();
+  });
+});
+
+describe('public/sw.js: the receipts list kept for the offline page', () => {
+  async function keptList(idb: IDBFactory) {
+    return (await openOfflineStore(idb).read()).snapshot;
+  }
+  async function workerWithList(fetchImpl: (...a: unknown[]) => unknown) {
+    const worker = loadWorker({ fetchImpl });
+    await openOfflineStore(worker.idb).write({ workspaceId: 'ws-a', company: 'A', receipts: [], savedAt: 1 }, 0);
+    return worker;
+  }
+  const redirectTo = () => Object.assign(new Response(null, { status: 200 }), {}) as Response;
+
+  it('uses the same names as the app', () => {
+    expect(SW_SOURCE).toContain(`const LIST_DB_NAME = '${OFFLINE_DB_NAME}';`);
+    expect(SW_SOURCE).toContain(`const LIST_DB_VERSION = ${OFFLINE_DB_VERSION};`);
+    expect(SW_SOURCE).toContain(`const LIST_STORE_NAME = '${OFFLINE_STORE_NAME}';`);
+    expect(SW_SOURCE).toContain(`const LIST_KEY = '${OFFLINE_KEY}';`);
+    expect(SW_SOURCE).toContain(`const LIST_DELETIONS_KEY = '${OFFLINE_DELETIONS_KEY}';`);
+  });
+
+  it.each([
+    ['an opaque redirect (the browser follows it to the login)', () => Object.defineProperty(redirectTo(), 'type', { value: 'opaqueredirect' })],
+    ['a followed redirect', () => Object.defineProperty(redirectTo(), 'redirected', { value: true })],
+  ])('deletes the list when a page of the app answers with %s: the session is gone', async (_label, make) => {
+    const worker = await workerWithList(async () => make());
+    await worker.request('/app/spending', { mode: 'navigate' });
+    expect(await keptList(worker.idb)).toBeNull();
+    // Counted, so a save that started before cannot write it back.
+    expect((await openOfflineStore(worker.idb).read()).deletions).toBe(1);
+  });
+
+  it('keeps the list on an ordinary page load, and on a redirect outside the app', async () => {
+    const worker = await workerWithList(async () => new Response('ok', { status: 200 }));
+    await worker.request('/app/spending', { mode: 'navigate' });
+    expect(await keptList(worker.idb)).not.toBeNull();
+    const elsewhere = await workerWithList(async () => Object.defineProperty(redirectTo(), 'type', { value: 'opaqueredirect' }));
+    await elsewhere.request('/no-access', { mode: 'navigate' });
+    await elsewhere.request('/application', { mode: 'navigate' });
+    expect(await keptList(elsewhere.idb)).not.toBeNull();
   });
 });
 

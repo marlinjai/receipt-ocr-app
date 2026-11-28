@@ -58,8 +58,10 @@ So the offline list is not a cached app page. It is data:
   app's own pages never redirect; the middleware does when the session expired, was ended at
   auth.lumitra.co or in another app, or the access was removed, and then no app code runs that
   could get a 401. Against: the same next person.
-- **The offline page shows no list saved more than 30 days ago.** Against: a browser where none of
-  the above ran (signed in, then never opened again).
+- **The offline page shows no list saved more than 7 days ago, or saved with a clock ahead.**
+  Against: a browser where none of the above ran (a session that ended while the app was closed,
+  never opened online again). The device does not know when the session ends (auth-brain sends no
+  expiry), so this bounds it.
 - **An answer for another company than the page shows deletes the list.** Against: a person
   removed from a company whose installed app stayed open.
 - **One company at a time**: a switch replaces the list, and a list of another company is never
@@ -73,8 +75,11 @@ So the offline list is not a cached app page. It is data:
 
 - **Text only, no receipt images offline.** Images would cost hundreds of megabytes on the phone
   for a few thousand receipts. Can follow if wanted.
-- **Lists older than 30 days are not shown offline.** Long enough for travel without a
-  connection; a device not used for a month should not keep showing receipts.
+- **Lists older than 7 days are not shown offline.** A week without a connection is covered; a
+  device left behind stops showing receipts a week after the app was last open online.
+- **A company erasure does not reach copies on devices.** The server cannot delete IndexedDB in
+  a browser. A copy goes the next time that browser opens the app (the session or the company is
+  gone, so the list is deleted) and is never shown after 7 days.
 - **An auth outage keeps the list**: the middleware answers it with 503 before the route runs.
 - **Freshness of one hour**, and saved again after an upload (the next save after an hour picks
   it up). The page shows when the list was saved.

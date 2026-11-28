@@ -35,12 +35,15 @@ describe('public/offline.html: the receipts list kept on this device', () => {
     expect(SOURCE).toContain(`var LIST_DB_VERSION = ${OFFLINE_DB_VERSION};`);
     expect(SOURCE).toContain(`var LIST_STORE_NAME = '${OFFLINE_STORE_NAME}';`);
     expect(SOURCE).toContain(`var LIST_KEY = '${OFFLINE_KEY}';`);
-    expect(SOURCE).toContain(`var MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;`);
-    expect(30 * 24 * 60 * 60 * 1000).toBe(OFFLINE_MAX_AGE_MS);
+    expect(SOURCE).toContain(`var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;`);
+    expect(7 * 24 * 60 * 60 * 1000).toBe(OFFLINE_MAX_AGE_MS);
   });
 
-  it('shows no list saved more than 30 days ago (a device left signed in somewhere)', async () => {
-    await openPage([receipt(1)], Date.now() - OFFLINE_MAX_AGE_MS - 1000);
+  it.each([
+    ['saved more than a week ago (a device left behind)', () => Date.now() - OFFLINE_MAX_AGE_MS - 1000],
+    ['saved while the clock ran ahead', () => Date.now() + 60 * 60 * 1000],
+  ])('shows no list %s', async (_label, savedAt) => {
+    await openPage([receipt(1)], savedAt());
     await new Promise((r) => setTimeout(r, 20));
     expect($('#saved').hidden).toBe(true);
   });

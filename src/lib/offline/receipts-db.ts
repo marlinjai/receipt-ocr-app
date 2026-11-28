@@ -20,8 +20,12 @@ export const OFFLINE_KEY = 'current';
  */
 export const OFFLINE_DELETIONS_KEY = 'deletions';
 const DELETIONS_KEY = OFFLINE_DELETIONS_KEY;
-/** The offline page shows no list older than this: a device left signed in elsewhere does not keep showing it forever. */
-export const OFFLINE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * The offline page shows no list older than this. The session's end is not known on the device (a
+ * session ended while the app was closed deletes nothing), so the list lasts a week after the app
+ * was last open online: enough for a trip without a connection, short for a device left behind.
+ */
+export const OFFLINE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** One receipt as the offline page shows it. Labels, never option ids; null where the receipt has no value. */
 export interface OfflineReceipt {

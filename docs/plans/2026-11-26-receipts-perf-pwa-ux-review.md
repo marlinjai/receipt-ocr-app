@@ -190,7 +190,26 @@ include the one-off reading of every receipt):
   can still be queued. Whether the app should show the last seen receipts offline is a product
   question (see "Questions for Marlin").
 
-## Fixed with this plan (branch `perf/receipts-perf-pwa-ux-review`, local, not deployed)
+## Measured on production after the deploy (2026-11-28)
+
+Merged in #263 and deployed at 00:31 UTC; measured right after with the headless browser, signed in,
+desktop processor.
+
+| What | Before | After |
+|---|---|---|
+| Elements on the spending page (default period) | 28,435 | 2,448 |
+| Server action calls of the sidebar over five clicks (finance, meals, spending, rules, finance) | 5 | 0 (one at the first page load) |
+| Installability errors | none | none |
+| App id (`Page.getAppId`) | `https://receipts.lumitra.co/app` | the same: existing installs stay one app |
+| Icons 192, 512, iOS 180 | SVG only | all three PNG answer 200 |
+| Page language and title | `en`, "Receipt OCR" | `de`, "Finanzen · Lumitra Receipts" |
+
+The spending page's size after hydration (`outerHTML`, which includes the inline data scripts) is
+1,986 KB; the before figure of 3.4 MB was the transferred document, so the two are not the same
+measure and no ratio is claimed. The "Unklar" list of the default period showed no rows this time,
+so its paging was not seen on production; the component test covers it.
+
+## Fixed with this plan (merged in #263)
 
 A push to `main` deploys to production by itself (`.github/workflows/deploy.yml`), so no pull
 request was opened. The "after" figures are from tests on fixtures or follow by construction; the
@@ -293,7 +312,7 @@ Effort: S under an hour, M about half a day, L more.
 - Which script files are largest and what is in them. Only the totals were measured (553 to 1,076
   KB per page, 176 to 327 KB on the wire); a bundle analysis of a production build is open.
 
-## Questions for Marlin
+## Questions for Marlin (answered 2026-11-28: offline view yes, see docs/plans/2026-11-28-offline-receipts.md; theme colour stays amber)
 
 1. **Offline:** should the installed app show the last seen receipts and figures without a
    connection? It would need the service worker to keep pages or data, which its current rule

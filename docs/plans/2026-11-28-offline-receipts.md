@@ -2,7 +2,7 @@
 title: Offline view of the receipts in the installed app
 summary: The offline page of the installed app lists the receipts of the company last open on the device, read only and text only. The app saves the list to IndexedDB at most once an hour from a new session-only route; the service worker still caches nothing but the offline page. Signing out or a refused session deletes the list.
 type: plan
-status: in-progress
+status: completed
 date: 2026-11-28
 tags: [receipts, pwa, offline]
 ---
@@ -93,3 +93,17 @@ So the offline list is not a cached app page. It is data:
   sign-out deletes the list.
 - `offline.html` executed in jsdom on a fake IndexedDB: the list, the search, markup shown as text,
   an empty or missing list, the names shared with the app compared by a test.
+
+## Verified on production (2026-11-28)
+
+Merged in #264 and deployed; checked with the headless browser, signed in:
+
+- The service worker is version v4 and controls the page. Ten seconds after opening the dashboard
+  the device held the list: 1,312 receipts, the ten fields above and nothing else.
+- Offline, `/app/spending` showed the offline page with the list: "1312 Belege", 100 rows,
+  "Weitere 100 von 1212 zeigen", the company and the time saved. A search for "2026" found 479, a
+  search for nothing that exists found 0. Back online, the button to the app appeared.
+- `GET /api/receipts/offline`: 0.67 to 1.35 s over three calls, 348 KB of JSON, sent gzip and
+  `no-store`. At most once an hour per device, in the background.
+- Not tried on production: signing out (it would sign the automation profile out); the tests cover it.
+

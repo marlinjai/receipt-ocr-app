@@ -8,7 +8,7 @@
   numbers once a minute, the spending page's closed table and "Unklar" list, manifest, icons and
   language. Next: make the payments read cheap.
   [plan](docs/plans/2026-11-26-receipts-perf-pwa-ux-review.md) (2026-11-28)
-- [ ] Offline view of the receipts in the installed app: the offline page lists the receipts of the
+- [x] Offline view of the receipts in the installed app (#264, 2026-11-28): the offline page lists the receipts of the
   company last open on the device (saved by the app at most once an hour, deleted on sign-out),
   text only, read only. [plan](docs/plans/2026-11-28-offline-receipts.md) (2026-11-28)
 - [x] Lumitra Feedback in the signed-in app: "Feedback" in the sidebar and the "Mehr" sheet opens the

@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth';
+import { SignOutLink } from '@/app/app/spending/PushSession';
 
 /**
  * Public page shown to a VERIFIED auth-brain session whose tenants hold no
@@ -19,13 +20,14 @@ export default function NoAccessPage() {
           auth-brain console (and add your email to its workspace), then reload
           this page.
         </p>
-        <a
+        {/* Through SignOutLink: it deletes the receipts list kept for the offline page and switches push off first. */}
+        <SignOutLink
           href={auth.logoutUrl()}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
           style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
         >
           Sign out and switch account
-        </a>
+        </SignOutLink>
       </div>
     </main>
   );

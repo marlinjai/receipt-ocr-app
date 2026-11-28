@@ -10,7 +10,9 @@
  *
  * It does exactly three things:
  *  1. When a page navigation fails because there is no connection, it answers
- *     with /offline.html, where a photo can still be taken into the capture queue.
+ *     with /offline.html, where a photo can still be taken into the capture queue
+ *     and the receipts list the app saved on this device can be read. That list
+ *     is data in IndexedDB written by the app, never a cached page.
  *  2. SHARE TARGET (Android only; iOS offers no share target to web apps): a
  *     file shared to the installed app arrives as a POST to /share-target. The
  *     worker puts it into the capture queue and sends the browser to /app,
@@ -23,7 +25,7 @@
  * worker when the server says so (see ServiceWorkerRegistrar).
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE_NAME = 'receipts-offline-' + VERSION;
 const OFFLINE_URL = '/offline.html';
 
@@ -123,15 +125,68 @@ self.addEventListener('fetch', (event) => {
 
   // A page navigation: always the network. Only when the network itself fails
   // (offline), the offline page. A server error is passed through as it is.
+  // A page of the app that answers with a redirect means the session is gone
+  // (expired, signed out elsewhere, access removed: the app's own pages never
+  // redirect): the receipts list kept for the offline page is deleted then.
   if (request.method === 'GET' && request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match(OFFLINE_URL).then((cached) => cached || Response.error())),
+      fetch(request).then(
+        (response) => {
+          if (isAppPage(url.pathname) && (response.type === 'opaqueredirect' || response.redirected)) {
+            event.waitUntil(deleteOfflineList().catch(() => undefined));
+          }
+          return response;
+        },
+        () => caches.match(OFFLINE_URL).then((cached) => cached || Response.error()),
+      ),
     );
     return;
   }
 
   // Everything else (scripts, styles, API calls, uploads): not handled here.
 });
+
+// ── The receipts list kept for the offline page ──────────────────────────────
+// The names must match src/lib/offline/receipts-db.ts (a test compares them).
+// Deleting counts the deletion, like the app does, so a save on its way does not write it back.
+const LIST_DB_NAME = 'receipts-offline';
+const LIST_DB_VERSION = 1;
+const LIST_STORE_NAME = 'snapshot';
+const LIST_KEY = 'current';
+const LIST_DELETIONS_KEY = 'deletions';
+
+function isAppPage(pathname) {
+  return pathname === '/app' || pathname.startsWith('/app/');
+}
+
+function deleteOfflineList() {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(LIST_DB_NAME, LIST_DB_VERSION);
+    open.onupgradeneeded = () => {
+      if (!open.result.objectStoreNames.contains(LIST_STORE_NAME)) open.result.createObjectStore(LIST_STORE_NAME);
+    };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction(LIST_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(LIST_STORE_NAME);
+      const current = store.get(LIST_DELETIONS_KEY);
+      current.onsuccess = () => {
+        const count = typeof current.result === 'number' && current.result >= 0 ? current.result : 0;
+        store.delete(LIST_KEY);
+        store.put(count + 1, LIST_DELETIONS_KEY);
+      };
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = tx.onabort = () => {
+        db.close();
+        reject(tx.error);
+      };
+    };
+  });
+}
 
 // ── Push ─────────────────────────────────────────────────────────────────────
 // The payload is JSON from src/lib/spending/notify/push.ts: title, body, path
@@ -156,7 +211,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = {};
   }
-  const title = typeof data.title === 'string' && data.title ? data.title : 'Receipt OCR';
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Lumitra Receipts';
   event.waitUntil(
     self.registration.showNotification(title, {
       body: typeof data.body === 'string' ? data.body : '',

@@ -2,6 +2,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./loop-actions', () => ({ enablePush: vi.fn(), forgetPushEverywhere: vi.fn(), pushStateOfDevice: vi.fn() }));
+const clearOfflineSnapshot = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('@/lib/offline/sync', () => ({ clearOfflineSnapshot }));
 
 import { renewPush, signOutWithPush } from './PushSession';
 import type { PushEnvironment, SubscriptionLike } from './push-device';
@@ -52,5 +54,19 @@ describe('signOutWithPush', () => {
     await signOutWithPush(null, '/logout', go);
     expect(go).toHaveBeenCalledTimes(2);
     warn.mockRestore();
+  });
+
+  it('deletes the receipts list of the offline page before it leaves, and signs out also when that fails', async () => {
+    const order: string[] = [];
+    const go = vi.fn(() => order.push('go'));
+    await signOutWithPush(null, '/logout', go, { forgetPushEverywhere: vi.fn(), clearOffline: async () => void order.push('clear') });
+    expect(order).toEqual(['clear', 'clear', 'go']);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await signOutWithPush(null, '/logout', go, { forgetPushEverywhere: vi.fn(), clearOffline: async () => { throw new Error('no IndexedDB'); } });
+    expect(go).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+    clearOfflineSnapshot.mockClear();
+    await signOutWithPush(null, '/logout', go);
+    expect(clearOfflineSnapshot).toHaveBeenCalledTimes(2);
   });
 });

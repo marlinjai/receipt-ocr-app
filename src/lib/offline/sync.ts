@@ -1,6 +1,6 @@
 import { openOfflineStore, type OfflineReceiptsResponse, type OfflineStore } from './receipts-db';
 
-/** How long a saved list counts as current: one read of all receipts per hour at most. */
+/** How long a saved list of the same company counts as current. A company switch reads again at once. */
 export const OFFLINE_FRESH_MS = 60 * 60 * 1000;
 
 export const OFFLINE_RECEIPTS_URL = '/api/receipts/offline';
@@ -23,8 +23,8 @@ function browserDeps(): SyncDeps {
 }
 
 /**
- * Saves the active company's receipts on this device when the saved list is older than an
- * hour, belongs to another company, or carries a time ahead of the clock. A session the server no longer knows (401, 403) deletes
+ * Saves the active company's receipts on this device when there is no saved list, or it is an
+ * hour old or older, belongs to another company, or carries a time ahead of the clock. A session the server no longer knows (401, 403) deletes
  * the list; a network failure or server error keeps it. An answer for another company than
  * the one asked for, or one that arrives after `signal` stopped it (the company switched, the
  * person signed out), is never written.

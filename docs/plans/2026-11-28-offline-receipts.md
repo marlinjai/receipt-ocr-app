@@ -26,22 +26,29 @@ So the offline list is not a cached app page. It is data:
 
 1. **Server**: `GET /api/receipts/offline` returns a compact list of the active company's
    receipts (`src/lib/offline/snapshot.ts`, built on `tableContext` and `allReceiptRows`, the
-   same reads as the review queue). No OCR text, no files. Session required, company from the
-   session only, `no-store`.
+   same reads as the review queue; the status options are read there only, so no other page
+   gets a query more). No OCR text, no files. Session required, company from the session only,
+   `no-store`, measured in the `[timing]` log. 401 or 403 when the session is refused, 503 when it
+   cannot be checked.
 2. **App**: `OfflineSnapshot`, mounted once in the `/app` layout inside the store provider (so
    it starts again on a company switch), saves the list to IndexedDB (`receipts-offline`) a few
    seconds after the page settled, when the saved one is older than an hour or belongs to another
    company, and again when the app comes back to the foreground after an hour. One read of the
-   receipts per hour at most, never during a page load.
+   receipts per hour at most, never during a page load. A refused session (401, 403) deletes the
+   list on the device; a network failure, a 503 or a server error keeps it. An answer for another
+   company, or one that arrives after a company switch or a sign-out, is never written.
 3. **Offline page**: `public/offline.html` stays self-contained (no app script), reads the
-   saved list and renders it with `textContent` only. The service worker's version goes up so
-   installed apps fetch the new page.
+   saved list and renders it with `textContent` only, 100 rows at a time with a search over all.
+   Coming back online while the list is open offers a button back to the app instead of leaving
+   at once. The service worker's version goes up so installed apps fetch the new page.
 
 ## Protections and who they protect against
 
-- **The saved list is deleted on sign-out** (`signOutWithPush`). Against: the next person who
-  uses the same browser after Marlin signed out. Without it, the offline page would show the
-  receipts without any session.
+- **The saved list is deleted on sign-out** (`signOutWithPush`), **and when the server refuses
+  the session** (expired, signed out elsewhere, removed from the company). Against: the next
+  person who uses the same browser. `/offline.html` is a public file, so without it the page
+  would show the receipts without any session. A save still on its way is stopped first, so it
+  cannot write the list back.
 - **One company at a time**: a switch replaces the list, and a list of another company is never
   shown as current. Against: nobody; it keeps the offline view right.
 - **Rendered as text, never as HTML.** Against: a vendor name or file name read from a receipt

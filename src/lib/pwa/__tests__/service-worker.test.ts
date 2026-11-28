@@ -181,7 +181,7 @@ describe('public/sw.js: navigation and lifecycle', () => {
     const worker = loadWorker({ existingCaches: ['receipt-ocr-v2', 'receipts-offline-v1', 'something-else'] });
     await worker.lifecycle('install');
     await worker.lifecycle('activate');
-    expect([...worker.stores.keys()]).toEqual(['receipts-offline-v3']);
+    expect([...worker.stores.keys()]).toEqual(['receipts-offline-v4']);
     expect(worker.scope.skipWaiting).toHaveBeenCalled();
     expect(worker.scope.clients.claim).toHaveBeenCalled();
   });
@@ -352,7 +352,7 @@ describe('public/sw.js: push', () => {
     await worker.dispatch('push', { data: null });
     await worker.dispatch('push', { data: { json: () => JSON.parse('{broken') } });
     expect(worker.scope.registration.showNotification).toHaveBeenCalledTimes(2);
-    expect(worker.scope.registration.showNotification.mock.calls[1]).toEqual(['Receipt OCR', expect.objectContaining({ data: { url: `${ORIGIN}/app/spending` } })]);
+    expect(worker.scope.registration.showNotification.mock.calls[1]).toEqual(['Lumitra Receipts', expect.objectContaining({ data: { url: `${ORIGIN}/app/spending` } })]);
   });
 
   it.each(['https://evil.example/x', '//evil.example/x', '/\\evil.example/x', 'javascript:alert(1)'])('never leads to another site (%s)', async (path) => {

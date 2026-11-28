@@ -6,6 +6,7 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
 import Refusals from '@/components/Refusals';
 import { PushRenewal } from './spending/PushSession';
+import { OfflineSnapshot } from '@/components/OfflineSnapshot';
 import { sessionCompanyName, sessionWorkspaceId } from '@/lib/auth-workspace';
 import AppSidebar from '@/components/nav/AppSidebar';
 import PhoneNav from '@/components/nav/PhoneNav';
@@ -61,6 +62,7 @@ async function renderShell(children: React.ReactNode) {
       </header>
       <BrowserRulesImport />
       <PushRenewal />
+      <OfflineSnapshot workspaceId={sessionWorkspaceId(session)} />
       <Refusals />
       {children}
       <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />

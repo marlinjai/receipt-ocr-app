@@ -19,6 +19,21 @@
   #status { margin: 16px 0 0; min-height: 1.5em; color: #e8e6e3; }
   #status.error { color: #f1a29d; }
   input[type="file"] { display: none; }
+  #saved { width: 100%; max-width: 40rem; margin-top: 24px; text-align: left; }
+  #saved h2 { font-size: 1.0625rem; margin: 0 0 4px; }
+  #saved .meta { font-size: 0.8125rem; margin: 0 0 12px; }
+  #search { width: 100%; box-sizing: border-box; min-height: 2.75rem; padding: 0 0.875rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.16); background: rgba(22,22,26,0.7); color: #e8e6e3; font: inherit; font-size: 1rem; }
+  #search:focus-visible { outline: 2px solid #e2a348; outline-offset: 2px; }
+  #count { font-size: 0.8125rem; margin: 10px 0 6px; }
+  #list { list-style: none; margin: 0; padding: 0; }
+  #list li { border-bottom: 1px solid rgba(255,255,255,0.08); padding: 10px 2px; }
+  #list .top { display: flex; justify-content: space-between; gap: 12px; }
+  #list .title { font-weight: 600; overflow-wrap: anywhere; }
+  #list .amount { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #list .sub { color: #a3a2aa; font-size: 0.8125rem; margin-top: 2px; }
+  #more { margin-top: 12px; background: transparent; border: 1px solid rgba(255,255,255,0.16); color: #e8e6e3; font-weight: 500; }
+  #back { margin-top: 10px; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -30,7 +45,17 @@
     <button id="take" class="primary" type="button">Foto aufnehmen</button>
     <a class="btn" href="/app">Erneut verbinden</a>
     <p id="status" role="status" aria-live="polite"></p>
+    <button id="back" class="primary" type="button" hidden>Verbindung wieder da: zur App</button>
   </div>
+  <section id="saved" aria-labelledby="saved-title" hidden>
+    <h2 id="saved-title">Belege auf diesem Gerät</h2>
+    <p class="meta" id="saved-meta"></p>
+    <label for="search" class="meta">Suchen (Name, Händler, Kategorie, Datum, Betrag)</label>
+    <input id="search" type="search" autocomplete="off" enterkeyhint="search">
+    <p id="count" role="status" aria-live="polite"></p>
+    <ul id="list"></ul>
+    <button id="more" type="button" hidden></button>
+  </section>
 </main>
 <script>
 // Self-contained on purpose: no application script is loaded here, so this page
@@ -99,8 +124,129 @@
   });
 
   showCount().catch(function () {});
-  // Back online: return to the app, which sends what is waiting.
-  window.addEventListener('online', function () { window.location.href = '/app'; });
+
+  // ── The receipts list kept on this device ────────────────────────────────
+  // The app saves it (src/lib/offline/receipts-db.ts; a test compares the four names) and
+  // deletes it on sign-out. Everything from it is written as text, never as HTML.
+  var LIST_DB_NAME = 'receipts-offline';
+  var LIST_DB_VERSION = 1;
+  var LIST_STORE_NAME = 'snapshot';
+  var LIST_KEY = 'current';
+  var PAGE = 100;
+  var saved = document.getElementById('saved');
+  var listEl = document.getElementById('list');
+  var countEl = document.getElementById('count');
+  var moreEl = document.getElementById('more');
+  var searchEl = document.getElementById('search');
+  var receipts = [];
+  var matches = [];
+  var shown = 0;
+
+  function readList() {
+    return new Promise(function (resolve, reject) {
+      if (!('indexedDB' in window)) { resolve(null); return; }
+      var open = indexedDB.open(LIST_DB_NAME, LIST_DB_VERSION);
+      open.onupgradeneeded = function () {
+        if (!open.result.objectStoreNames.contains(LIST_STORE_NAME)) open.result.createObjectStore(LIST_STORE_NAME);
+      };
+      open.onerror = function () { reject(open.error); };
+      open.onsuccess = function () {
+        var db = open.result;
+        try {
+          var request = db.transaction(LIST_STORE_NAME, 'readonly').objectStore(LIST_STORE_NAME).get(LIST_KEY);
+          request.onsuccess = function () { db.close(); resolve(request.result || null); };
+          request.onerror = function () { db.close(); reject(request.error); };
+        } catch (e) { db.close(); reject(e); }
+      };
+    });
+  }
+
+  function day(date) {
+    var m = typeof date === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+    return m ? m[3] + '.' + m[2] + '.' + m[1] : '';
+  }
+
+  function money(value, currency) {
+    if (typeof value !== 'number' || !isFinite(value)) return '';
+    try {
+      return new Intl.NumberFormat('de-DE', { style: 'currency', currency: currency || 'EUR' }).format(value);
+    } catch (e) {
+      return value.toFixed(2).replace('.', ',') + (currency ? ' ' + currency : '');
+    }
+  }
+
+  function words(r) {
+    return [r.name, r.vendor, r.category, r.status, r.assignment, r.date, day(r.date), money(r.gross, r.currency), typeof r.gross === 'number' ? String(r.gross).replace('.', ',') : '']
+      .filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function item(r) {
+    var li = document.createElement('li');
+    var top = document.createElement('div');
+    top.className = 'top';
+    var title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = r.name || r.vendor || 'Beleg ohne Namen';
+    var sum = document.createElement('span');
+    sum.className = 'amount';
+    sum.textContent = money(r.gross, r.currency);
+    top.appendChild(title);
+    top.appendChild(sum);
+    var sub = document.createElement('div');
+    sub.className = 'sub';
+    var parts = [day(r.date) || 'ohne Datum'];
+    if (r.vendor && r.vendor !== r.name) parts.push(r.vendor);
+    [r.category, r.assignment, r.status].forEach(function (p) { if (p) parts.push(p); });
+    if (r.currency && r.currency !== 'EUR' && typeof r.eur === 'number') parts.push(money(r.eur, 'EUR'));
+    sub.textContent = parts.join(' · ');
+    li.appendChild(top);
+    li.appendChild(sub);
+    return li;
+  }
+
+  function showMore() {
+    var next = matches.slice(shown, shown + PAGE);
+    var fragment = document.createDocumentFragment();
+    next.forEach(function (r) { fragment.appendChild(item(r)); });
+    listEl.appendChild(fragment);
+    shown += next.length;
+    var rest = matches.length - shown;
+    moreEl.hidden = rest <= 0;
+    moreEl.textContent = 'Weitere ' + Math.min(PAGE, rest) + ' von ' + rest + ' zeigen';
+  }
+
+  function filter() {
+    var query = searchEl.value.trim().toLowerCase();
+    matches = query ? receipts.filter(function (r) { return r._words.indexOf(query) !== -1; }) : receipts;
+    listEl.textContent = '';
+    shown = 0;
+    countEl.textContent = query
+      ? (matches.length === 1 ? '1 Treffer' : matches.length + ' Treffer') + ' von ' + receipts.length
+      : (receipts.length === 1 ? '1 Beleg' : receipts.length + ' Belege');
+    showMore();
+  }
+
+  readList().then(function (snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.receipts)) return;
+    receipts = snapshot.receipts.filter(function (r) { return r && typeof r.id === 'string'; });
+    receipts.forEach(function (r) { r._words = words(r); });
+    var when = typeof snapshot.savedAt === 'number' ? new Date(snapshot.savedAt) : null;
+    var stand = when ? when.toLocaleDateString('de-DE') + ', ' + when.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr' : 'unbekannt';
+    document.getElementById('saved-meta').textContent = (typeof snapshot.company === 'string' && snapshot.company ? snapshot.company + ' · ' : '') + 'Stand ' + stand + '. Nur lesen: Änderungen gehen erst wieder mit Verbindung.';
+    saved.hidden = false;
+    filter();
+  }).catch(function () {});
+
+  searchEl.addEventListener('input', filter);
+  moreEl.addEventListener('click', showMore);
+  document.getElementById('back').addEventListener('click', function () { window.location.href = '/app'; });
+
+  // Back online: return to the app, which sends what is waiting. While the list is open, someone
+  // may be reading or searching it, so a button offers the way back instead of leaving at once.
+  window.addEventListener('online', function () {
+    if (saved.hidden) { window.location.href = '/app'; return; }
+    document.getElementById('back').hidden = false;
+  });
 })();
 </script>
 </body>

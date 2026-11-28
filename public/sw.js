@@ -10,7 +10,9 @@
  *
  * It does exactly three things:
  *  1. When a page navigation fails because there is no connection, it answers
- *     with /offline.html, where a photo can still be taken into the capture queue.
+ *     with /offline.html, where a photo can still be taken into the capture queue
+ *     and the receipts list the app saved on this device can be read. That list
+ *     is data in IndexedDB written by the app, never a cached page.
  *  2. SHARE TARGET (Android only; iOS offers no share target to web apps): a
  *     file shared to the installed app arrives as a POST to /share-target. The
  *     worker puts it into the capture queue and sends the browser to /app,
@@ -23,7 +25,7 @@
  * worker when the server says so (see ServiceWorkerRegistrar).
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE_NAME = 'receipts-offline-' + VERSION;
 const OFFLINE_URL = '/offline.html';
 
@@ -156,7 +158,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = {};
   }
-  const title = typeof data.title === 'string' && data.title ? data.title : 'Receipt OCR';
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Lumitra Receipts';
   event.waitUntil(
     self.registration.showNotification(title, {
       body: typeof data.body === 'string' ? data.body : '',

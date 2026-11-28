@@ -1,7 +1,10 @@
 ---
+title: Offline view of the receipts in the installed app
+summary: The offline page of the installed app lists the receipts of the company last open on the device, read only and text only. The app saves the list to IndexedDB at most once an hour from a new session-only route; the service worker still caches nothing but the offline page. Signing out or a refused session deletes the list.
 type: plan
 status: in-progress
 date: 2026-11-28
+tags: [receipts, pwa, offline]
 ---
 
 # Offline view of the receipts in the installed app

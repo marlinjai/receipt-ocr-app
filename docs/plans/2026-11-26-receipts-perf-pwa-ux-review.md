@@ -1,8 +1,8 @@
 ---
 title: Receipts review - load time, installed app and navigation
-summary: A measured review of why the receipts app feels slow, how far it is a real installed app, and where navigation hurts. Four passes on production (headless browser, frontend code, server timing logs, the PWA state). The slowness has three main causes, each measured, the largest being that every page reads every payment of the company on the server (0.6 to 1.75 s in the log; the dashboard is slower than after the October fix) and that the sidebar's two numbers re-ran the dashboard's review list on every click. Fixed on a local branch, not deployed - the sidebar numbers, the spending page's 20,000 hidden table elements, and the manifest and icons. What remains is ordered by value.
+summary: A measured review of why the receipts app feels slow, how far it is a real installed app, and where navigation hurts. Four passes on production (headless browser, frontend code, server timing logs, the PWA state). The slowness has three main causes, each measured, the largest being that every page reads every payment of the company on the server (0.6 to 1.75 s in the log; the dashboard is slower than after the October fix) and that the sidebar's two numbers re-ran the dashboard's review list on every click. Fixed and merged in #263 (2026-11-28) - the sidebar numbers, the spending page's 20,000 hidden table elements, and the manifest and icons. What remains is ordered by value.
 type: plan
-status: draft
+status: in-progress
 tags: [receipts, review, performance, pwa, navigation, ux]
 projects: [receipt-ocr-app]
 date: 2026-11-26
